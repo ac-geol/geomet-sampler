@@ -1,0 +1,205 @@
+# Example project config.
+#
+# Every column name in this file belongs to the user's data, not to the tool. The
+# library never sees these names: the readers map them onto the canonical schema at
+# load, and everything downstream works in canonical names only.
+#
+# This config plus the input CSVs is a complete, reproducible record of how a sample
+# list was produced. A hash of this file is written into every output.
+
+project:
+  name: MPA Geomet Programme 2026
+  crs: EPSG:26909
+  output_dir: ../output
+
+conventions:
+  length_units: m                 # m | ft
+  dip_convention: negative_down   # negative_down | positive_down
+  azimuth_reference: grid         # grid | true
+  magnetic_declination_deg: 0.0   # applied only when azimuth_reference: true
+  density_units: t_m3             # t_m3 | g_cm3 | lb_ft3
+
+# ---------------------------------------------------------------- data sources
+sources:
+
+  collar:
+    path: ../data/MPA_Collar_20240227.csv
+    encoding: auto
+    columns:
+      hole_id: HoleID
+      east: Easting
+      north: Northing
+      rl: Elevation
+      total_depth: Length_m
+    carry_through:
+      - HoleType
+      - Prospect
+      - Year
+
+  survey:
+    path: ../data/MPA_Survey_20240227.csv
+    columns:
+      hole_id: HoleID
+      depth: Depth_m
+      dip: Dip
+      azimuth: Azimuth
+
+  assay:
+    path: ../data/MPA_Samples_BD_20240227.csv
+    columns:
+      hole_id: HoleID
+      from_m: From_m
+      to_m: To_m
+      sample_id: null             # no sample ID in this export: generated, WARN
+    density:
+      source: BD_tonnes_m3
+      fallback_constant: 2.70
+    flags:
+      low_recovery:
+        source: "LowRecovery_<=85pct"
+        type: boolean
+        true_values: [Y, "1", TRUE, "true"]
+
+  litho:
+    path: ../data/MPA_Interp_20240227.csv
+    columns:
+      hole_id: holeid
+      from_m: from
+      to_m: to
+      logged_code: Code
+
+  domain_lookup:
+    path: ../data/domain_lookup.csv
+    columns:
+      logged_code: logged_code
+      geomet_domain: geomet_domain
+
+  block_model:
+    path: ../data/block_model_periods.csv
+    columns:
+      x: X
+      y: Y
+      z: Z
+      dx: DX
+      dy: DY
+      dz: DZ
+      period: PERIOD
+    density:
+      source: DENSITY
+      fallback_constant: 2.70
+
+  availability:
+    path: ../data/hole_availability.csv
+    columns:
+      hole_id: hole_id
+      availability: availability
+      core_diameter_mm: core_diameter_mm
+      remaining_fraction: remaining_fraction
+    value_map:
+      AVAILABLE: [AVAILABLE, YES, Y, IN STORAGE]
+      UNAVAILABLE: [UNAVAILABLE, NO, N, DISPOSED, CONSUMED]
+      PLANNED: [PLANNED, PROPOSED, FUTURE]
+
+  existing_testwork:
+    path: ../data/existing_testwork.csv
+    columns:
+      sample_id: sample_id
+      hole_id: HoleID
+      from_m: from_m
+      to_m: to_m
+      geomet_domain: null         # null -> derived from the recorded depths
+      test_package: test_package
+
+  planned_collar: null
+  planned_survey: null
+
+# ------------------------------------------------------- user-declared fields
+# Role names on the left are invented by the user. `hard_break_on` and
+# `allocation_key` reference them. Nothing in the code enumerates these.
+attributes:
+  weathering:
+    block_model: WEATHERING
+    drillhole: null               # not logged in this dataset
+  rock_type:
+    block_model: ROCKTYPE
+    drillhole: null
+  resource_class:
+    block_model: CLASS
+    drillhole: null
+
+elements:
+  Zn:
+    primary: true                 # exactly one element must be primary
+    drillhole: {field: Zn_pct, units: pct}
+    block_model: {field: ZN_PCT, units: pct}
+  Pb:
+    drillhole: {field: Pb_pct, units: pct}
+    block_model: {field: null, units: null}
+  Ag:
+    drillhole: {field: Ag_ppm, units: ppm}
+    block_model: {field: AG_GPT, units: gpt}
+
+# ---------------------------------------------------------------- processing
+desurvey:
+  method: minimum_curvature
+  fill_collar_survey: true
+
+domaining:
+  # The block model role whose vocabulary should agree with the logged geomet_domain.
+  # Leave null and the tool will not guess a correspondence, and domain_match stays blank.
+  domain_match_attribute: rock_type
+  hard_break_on:
+    - geomet_domain
+    - weathering
+  max_interval_gap_m: 0.10
+  break_on_low_recovery: true
+  break_on_missing_primary_grade: true
+
+  allocation_key:
+    - rock_type
+    - weathering
+    - grade_bin
+  grade_bins:
+    element: Zn
+    source: drillhole             # bin candidates on their own assays
+    edges: [0.0, 2.0, 5.0, 999.0]
+    labels: [LOW, MED, HIGH]
+
+compositing:
+  min_length_m: 6.0
+  max_length_m: 30.0
+  target_mass_kg: 50.0
+  min_mass_kg: 40.0
+  allow_multi_hole: false
+  max_cv_primary: 1.0
+  require_grade_bin_match: true
+
+mass:
+  default_core_diameter_mm: 63.5
+  default_remaining_fraction: 0.5
+  loss_factor: 0.90               # PLACEHOLDER: calibrate against past programmes
+
+allocation:
+  method: neyman                  # proportional | neyman | manual
+  total_samples: 40
+  min_samples_per_domain: 2
+  min_domain_tonnage_pct: 1.0
+  risk_multipliers: {}            # e.g. VOLCANIC-OXIDE-HIGH: 1.5
+  period_weights:
+    1: 3.0
+    2: 2.5
+    3: 2.0
+    4: 1.5
+    default: 1.0
+
+selection:
+  method: greedy_with_swap
+  max_samples_per_hole: 3
+  min_separation_m: 50.0
+  swap_iterations: 200
+  random_seed: 42
+
+reporting:
+  formats: [xlsx, csv]
+  include_gap_register: true
+  include_plots: true
