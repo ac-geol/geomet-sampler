@@ -76,7 +76,9 @@ These are the things that make the output wrong in ways that are hard to spot:
 
 ## Reference data quirks
 
-The example files in `data/` are a **schema example only**. Real users will have entirely
+`data/` is git-ignored and ships with nothing; build it with
+`uv run python scripts/make_example_data.py`. The generated files are a
+**schema example only**. Real users will have entirely
 different column names, units and conventions. Never treat these names as defaults in code;
 they belong in the example config and nowhere else. Handle the messiness in the readers, do
 not clean the files by hand:
@@ -99,6 +101,7 @@ uv run pytest                    # tests
 uv run pytest --cov              # coverage
 uv run ruff check --fix .
 uv run ruff format .
+uv run python scripts/make_example_data.py   # build data/ (not tracked)
 uv run geomet-sampler init --collar ... --out config/project.yaml
 uv run geomet-sampler run --config config/example_project.yaml
 ```

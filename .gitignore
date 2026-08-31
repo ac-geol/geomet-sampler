@@ -16,19 +16,11 @@ output/
 *.xls
 
 # ------------------------------------------------- real drillhole data (deny by default)
-# This repository is public. `data/` and `config/` are deny-by-default so that a
-# real export dropped into either one cannot be staged by `git add -A`. Only the
-# synthetic example files below are allowed through. If you add a new synthetic
-# example file, add an explicit negation for it; never relax the `*` rules.
-data/*
-!data/DEMO_Collar_0001.csv
-!data/DEMO_Survey_0001.csv
-!data/DEMO_Samples_BD_0001.csv
-!data/DEMO_Interp_0001.csv
-!data/block_model_periods.csv
-!data/domain_lookup.csv
-!data/existing_testwork.csv
-!data/hole_availability.csv
+# This repository is public. `data/` is ignored unconditionally: there are no
+# exceptions and nothing in it is ever tracked, so no judgement call stands
+# between a real export and a commit. The example dataset is not stored here --
+# regenerate it with `uv run python scripts/make_example_data.py`.
+data/
 
 # A real project config carries the project name, CRS, network drive paths and
 # the column names of a client's database. Only the example config is public.
