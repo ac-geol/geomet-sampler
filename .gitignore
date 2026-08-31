@@ -6,3 +6,4 @@ __pycache__/
 htmlcov/
 .ruff_cache/
 output/
+.DS_Store
