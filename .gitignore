@@ -1,3 +1,4 @@
+# ---------------------------------------------------------------- python
 __pycache__/
 *.pyc
 .venv/
@@ -5,5 +6,56 @@ __pycache__/
 .coverage
 htmlcov/
 .ruff_cache/
-output/
 .DS_Store
+
+# ---------------------------------------------------------------- outputs
+# Pick lists, composites and gap registers are derived from whatever data was
+# loaded. On a real project they carry real hole IDs, grades and coordinates.
+output/
+*.xlsx
+*.xls
+
+# ------------------------------------------------- real drillhole data (deny by default)
+# This repository is public. `data/` and `config/` are deny-by-default so that a
+# real export dropped into either one cannot be staged by `git add -A`. Only the
+# synthetic example files below are allowed through. If you add a new synthetic
+# example file, add an explicit negation for it; never relax the `*` rules.
+data/*
+!data/DEMO_Collar_0001.csv
+!data/DEMO_Survey_0001.csv
+!data/DEMO_Samples_BD_0001.csv
+!data/DEMO_Interp_0001.csv
+!data/block_model_periods.csv
+!data/domain_lookup.csv
+!data/existing_testwork.csv
+!data/hole_availability.csv
+
+# A real project config carries the project name, CRS, network drive paths and
+# the column names of a client's database. Only the example config is public.
+config/*
+!config/example_project.yaml
+
+# Common drillhole database and mine planning package exports, wherever they land.
+*.mdb
+*.accdb
+*.sqlite
+*.sqlite3
+*.db
+*.dm
+*.dmbm
+*.bmf
+*.dgd
+*.00t
+*.str
+*.mdl
+*.lfpkg
+*.zip
+*.7z
+
+# ---------------------------------------------------------------- secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+.claude/settings.local.json

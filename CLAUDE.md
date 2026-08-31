@@ -81,14 +81,15 @@ different column names, units and conventions. Never treat these names as defaul
 they belong in the example config and nowhere else. Handle the messiness in the readers, do
 not clean the files by hand:
 
-- `MPA_Samples_BD_20240227.csv` has a UTF-8 BOM on the `HoleID` header
-- `MPA_Survey_20240227.csv` is fully quoted, all fields read as strings
+- `DEMO_Samples_BD_0001.csv` has a UTF-8 BOM on the `HoleID` header
+- `DEMO_Survey_0001.csv` is fully quoted, all fields read as strings
 - All files use CRLF line endings
 - Lithology file uses lowercase `holeid`, `from`, `to`; other files use `HoleID`
-- 559 collars, 432 have assays, 347 have lithology. Partial coverage is normal.
+- 60 collars, 52 have assays, 55 have lithology. Partial coverage is normal.
 - The example block model is in a local grid, not UTM, and does not correspond to the
   drilling. It is a schema example only.
-- The example block model has **no PERIOD column**. One must be added before M5 can run.
+- The example block model carries a PERIOD column, populated for the blocks inside the
+  pit stages (periods 1 to 4) and blank elsewhere.
 
 ## Commands
 

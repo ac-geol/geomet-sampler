@@ -154,9 +154,9 @@ readers must absorb without hand-editing:
 - Survey file fully quoted, all fields parse as strings
 - CRLF line endings throughout
 - Lithology file uses lowercase `holeid`, `from`, `to`; other files use `HoleID`
-- 559 collars, 432 with assays, 347 with lithology
+- 60 collars, 52 with assays, 55 with lithology
 - No sample ID column (Tier 2 fallback applies)
-- Block model in a local grid, not corresponding to the drilling, and with no period field
+- Block model in a local grid, not corresponding to the drilling; carries a period field
 
 ---
 
@@ -169,8 +169,8 @@ record of how a sample list was produced. A config hash is written into every ou
 
 ```yaml
 project:
-  name: MPA Geomet Programme 2026
-  crs: EPSG:26909
+  name: Demo Geomet Programme
+  crs: null                       # CONFIRM: set to the project CRS; example data is a local grid
   output_dir: ./output
 
 conventions:
@@ -184,7 +184,7 @@ conventions:
 sources:
 
   collar:
-    path: data/MPA_Collar_20240227.csv
+    path: data/DEMO_Collar_0001.csv
     encoding: auto              # auto | utf-8 | utf-8-sig | cp1252
     columns:
       hole_id: HoleID
@@ -198,7 +198,7 @@ sources:
       - Year
 
   survey:
-    path: data/MPA_Survey_20240227.csv
+    path: data/DEMO_Survey_0001.csv
     columns:
       hole_id: HoleID
       depth: Depth_m
@@ -206,7 +206,7 @@ sources:
       azimuth: Azimuth
 
   assay:
-    path: data/MPA_Samples_BD_20240227.csv
+    path: data/DEMO_Samples_BD_0001.csv
     columns:
       hole_id: HoleID
       from_m: From_m
@@ -225,7 +225,7 @@ sources:
         # direction: below
 
   litho:
-    path: data/MPA_Interp_20240227.csv
+    path: data/DEMO_Interp_0001.csv
     columns:
       hole_id: holeid
       from_m: from

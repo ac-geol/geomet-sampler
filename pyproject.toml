@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Select drill core intervals for geometallurgical testwork"
 readme = "README.md"
 license = "MIT"
-authors = [{ name = "Alex", email = "al.chojno@gmail.com" }]
+authors = [{ name = "Alex", email = "78002044+ac-geol@users.noreply.github.com" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "pandas>=2.2",

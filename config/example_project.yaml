@@ -8,8 +8,8 @@
 # list was produced. A hash of this file is written into every output.
 
 project:
-  name: MPA Geomet Programme 2026
-  crs: EPSG:26909
+  name: Demo Geomet Programme
+  crs: null                       # CONFIRM: set to the project CRS; example data is a local grid
   output_dir: ../output
 
 conventions:
@@ -23,7 +23,7 @@ conventions:
 sources:
 
   collar:
-    path: ../data/MPA_Collar_20240227.csv
+    path: ../data/DEMO_Collar_0001.csv
     encoding: auto
     columns:
       hole_id: HoleID
@@ -37,7 +37,7 @@ sources:
       - Year
 
   survey:
-    path: ../data/MPA_Survey_20240227.csv
+    path: ../data/DEMO_Survey_0001.csv
     columns:
       hole_id: HoleID
       depth: Depth_m
@@ -45,7 +45,7 @@ sources:
       azimuth: Azimuth
 
   assay:
-    path: ../data/MPA_Samples_BD_20240227.csv
+    path: ../data/DEMO_Samples_BD_0001.csv
     columns:
       hole_id: HoleID
       from_m: From_m
@@ -61,7 +61,7 @@ sources:
         true_values: [Y, "1", TRUE, "true"]
 
   litho:
-    path: ../data/MPA_Interp_20240227.csv
+    path: ../data/DEMO_Interp_0001.csv
     columns:
       hole_id: holeid
       from_m: from

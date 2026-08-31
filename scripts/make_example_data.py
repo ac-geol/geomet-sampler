@@ -1,6 +1,6 @@
 """Generate the synthetic example dataset used by config/example_project.yaml.
 
-The real MPA export is not distributed with this repository. These files stand in for
+The real project export is not distributed with this repository. These files stand in for
 it: same shape, same messiness, different numbers. They deliberately reproduce the
 quirks the readers must absorb, so running the example exercises the awkward paths:
 
@@ -26,7 +26,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
 
-RNG = np.random.default_rng(20240227)
+RNG = np.random.default_rng(12345)
 
 N_HOLES = 60
 GRID_ORIGIN = (10_000.0, 20_000.0, 450.0)
@@ -134,7 +134,7 @@ def main() -> None:
     print("writing example data:")
 
     write_csv(
-        DATA / "MPA_Collar_20240227.csv",
+        DATA / "DEMO_Collar_0001.csv",
         ["HoleID", "Easting", "Northing", "Elevation", "Length_m", "HoleType", "Prospect", "Year"],
         [
             [
@@ -169,7 +169,7 @@ def main() -> None:
                 ]
             )
     write_csv(
-        DATA / "MPA_Survey_20240227.csv",
+        DATA / "DEMO_Survey_0001.csv",
         ["HoleID", "Depth_m", "Dip", "Azimuth"],
         survey_rows,
         quote_all=True,
@@ -192,7 +192,7 @@ def main() -> None:
             code = str(RNG.choice(LITHO_CODES[domain]))
             litho_rows.append([c["HoleID"], f"{depth:.2f}", f"{end:.2f}", code])
             depth = end
-    write_csv(DATA / "MPA_Interp_20240227.csv", ["holeid", "from", "to", "Code"], litho_rows)
+    write_csv(DATA / "DEMO_Interp_0001.csv", ["holeid", "from", "to", "Code"], litho_rows)
 
     assay_rows = []
     for c in assayed:
@@ -216,7 +216,7 @@ def main() -> None:
             )
             depth = end
     write_csv(
-        DATA / "MPA_Samples_BD_20240227.csv",
+        DATA / "DEMO_Samples_BD_0001.csv",
         [
             "HoleID",
             "From_m",
