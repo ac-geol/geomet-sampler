@@ -16,7 +16,7 @@ from .config import load_config
 from .errors import GeometSamplerError
 from .init_config import build_draft
 from .io.writers import present, write_csv
-from .pipeline import gap_frame, run_pipeline, summary_frame
+from .pipeline import gap_frame, run_pipeline, run_validation, summary_frame
 from .report.excel import write_outputs, write_validation_report
 from .report.plots import orientation_notice, write_hole_orientation, write_plots
 from .validate.checks import report_frame, summarise
@@ -64,12 +64,18 @@ def _emit(frame, cfg, out: Path | None, label: str) -> None:
 
 @app.command()
 def validate(config: ConfigOption, force: ForceOption = False) -> None:
-    """Load every source, run all checks, and write the validation report."""
-    _, state = _run(config, "load", force=True)
+    """Load every source, build geometry, run all checks, and write the validation report."""
+    cfg = _load(config)
+    try:
+        state = run_validation(cfg)
+    except GeometSamplerError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
     path = write_validation_report(state)
     counts = summarise(state.report.issues)
     typer.echo(report_frame(state.report.issues).to_string(index=False, max_colwidth=90))
     typer.echo(f"\n{counts['ERROR']} errors, {counts['WARN']} warnings -> {path}")
+    _notify_orientation(state)
     if counts["ERROR"] and not force:
         raise typer.Exit(code=1)
 

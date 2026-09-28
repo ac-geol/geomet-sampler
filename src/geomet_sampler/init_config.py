@@ -451,6 +451,7 @@ mass:
   default_core_diameter_mm: 63.5{CONFIRM} <- HQ 63.5, NQ 47.6, BQ 36.5, PQ 85.0
   default_remaining_fraction: 0.5{CONFIRM} <- 0.5 assumes half core already assayed
   loss_factor: 0.90{CONFIRM} <- PLACEHOLDER, calibrate against a past programme
+  prior_testwork_core: exclude{CONFIRM} <- `available` if earlier testwork left core in the tray
 
 allocation:
   method: neyman

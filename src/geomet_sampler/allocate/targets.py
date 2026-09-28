@@ -251,6 +251,66 @@ def existing_coverage(
     return counts, issues
 
 
+def mark_prior_testwork(
+    intervals: pd.DataFrame, existing_testwork: pd.DataFrame | None, *, policy: str
+) -> tuple[pd.DataFrame, list[Issue]]:
+    """Flag every interval that overlaps core an earlier testwork sample consumed.
+
+    With ``policy == "exclude"`` flagged intervals break runs and supply no candidates;
+    with ``"available"`` nothing is flagged and earlier testwork only reduces targets.
+    Records that cannot be placed on the hole are reported rather than guessed at.
+    """
+    out = intervals.copy()
+    out[M.PRIOR_TESTWORK] = False
+    out[M.PRIOR_TESTWORK_IDS] = [() for _ in range(len(out))]
+    if existing_testwork is None or existing_testwork.empty or policy != "exclude":
+        return out, []
+
+    issues: list[Issue] = []
+    located = existing_testwork[M.FROM_M].notna() & existing_testwork[M.TO_M].notna()
+    if (~located).any():
+        unplaced = existing_testwork[~located]
+        issues.append(
+            Issue(
+                Severity.WARN,
+                "prior_testwork_unlocated",
+                f"{len(unplaced)} earlier testwork records have no from/to depth, so the core "
+                "they used cannot be excluded from candidates. Check these holes by hand: "
+                f"{sorted(set(unplaced[M.HOLE_ID]))[:10]}",
+                source="existing_testwork",
+                count=len(unplaced),
+                detail={"samples": sorted(unplaced[M.SAMPLE_ID].astype(str))[:50]},
+            )
+        )
+
+    ids: dict[int, list[str]] = {}
+    by_hole = {hid: g for hid, g in out.groupby(M.HOLE_ID, sort=False)}
+    for record in existing_testwork[located].itertuples(index=False):
+        hole = by_hole.get(getattr(record, M.HOLE_ID))
+        if hole is None:
+            continue
+        start, end = getattr(record, M.FROM_M), getattr(record, M.TO_M)
+        hit = hole.index[(hole[M.TO_M] > start + 1e-6) & (hole[M.FROM_M] < end - 1e-6)]
+        for index in hit:
+            ids.setdefault(index, []).append(str(getattr(record, M.SAMPLE_ID)))
+
+    if ids:
+        rows = list(ids)
+        out.loc[rows, M.PRIOR_TESTWORK] = True
+        out[M.PRIOR_TESTWORK_IDS] = [tuple(ids.get(i, ())) for i in out.index]
+        issues.append(
+            Issue(
+                Severity.INFO,
+                "prior_testwork_excluded",
+                f"{len(rows)} intervals overlap core used by earlier testwork and are excluded "
+                "from candidates (mass.prior_testwork_core: exclude)",
+                source="existing_testwork",
+                count=len(rows),
+            )
+        )
+    return out, issues
+
+
 def _derive_domain(row, intervals: pd.DataFrame) -> str | None:
     """Modal allocation domain of the framework intervals the record overlaps."""
     if M.ALLOCATION_DOMAIN not in intervals.columns:

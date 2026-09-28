@@ -314,6 +314,11 @@ class MassConfig(Strict):
     default_core_diameter_mm: float
     default_remaining_fraction: float = 0.5
     loss_factor: float = 0.90
+    #: What earlier testwork did to the core it used. `exclude` treats every interval
+    #: overlapping a recorded sample as consumed: it breaks runs and supplies nothing.
+    #: `available` only counts the sample toward domain targets, for programmes where
+    #: testwork took a split and the rest of the core is still in the tray.
+    prior_testwork_core: Literal["exclude", "available"] = "exclude"
 
 
 class AllocationConfig(Strict):
@@ -400,6 +405,10 @@ class Config(Strict):
     # populated by load_config; not part of the YAML
     config_hash: str = ""
     config_path: Path | None = None
+    #: source name -> short SHA-256 of the file's bytes, so a run names its exact inputs
+    input_hashes: dict[str, str] = Field(default_factory=dict)
+    #: config plus every input; keys the stage cache, so new data never reuses old results
+    run_hash: str = ""
 
     # -------------------------------------------------------------- accessors
 
@@ -526,7 +535,38 @@ def load_config(path: str | Path) -> Config:
     cfg.config_hash = config_hash(text)
     cfg.config_path = path
     _resolve_paths(cfg, path.parent)
+    cfg.input_hashes = hash_inputs(cfg)
+    cfg.run_hash = config_hash(
+        cfg.config_hash + "".join(f"{k}={v};" for k, v in sorted(cfg.input_hashes.items()))
+    )
     return cfg
+
+
+#: Bytes read per step when hashing, so a large block model is never held in memory.
+HASH_CHUNK_BYTES = 1 << 20
+
+
+def file_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(HASH_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()[:16]
+
+
+def hash_inputs(cfg: Config) -> dict[str, str]:
+    """Hash every configured input file.
+
+    The config hash alone does not identify a run: re-exporting a CSV under the same
+    name changes the answer without changing the config. A missing file is skipped here
+    and reported by its reader, which can say which mapping points at it.
+    """
+    hashes = {}
+    for name in type(cfg.sources).model_fields:
+        source = getattr(cfg.sources, name)
+        if source is not None and source.path.is_file():
+            hashes[name] = file_hash(source.path)
+    return hashes
 
 
 def _resolve_paths(cfg: Config, base: Path) -> None:

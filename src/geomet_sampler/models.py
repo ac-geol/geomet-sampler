@@ -72,6 +72,9 @@ AVAILABILITY = "availability"
 IS_PLANNED = "is_planned"
 ALLOCATION_DOMAIN = "allocation_domain"
 BLOCK_TONNES = "tonnes"
+#: Interval overlaps core already consumed by a recorded earlier testwork sample.
+PRIOR_TESTWORK = "prior_testwork"
+PRIOR_TESTWORK_IDS = "prior_testwork_ids"
 
 COLLAR_REQUIRED = (HOLE_ID, EAST, NORTH, RL)
 SURVEY_REQUIRED = (HOLE_ID, DEPTH, DIP, AZIMUTH)

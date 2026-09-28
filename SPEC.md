@@ -166,7 +166,11 @@ attributes, `carry_through`) is available with the same fallbacks.
 
 - **Existing testwork**: prior samples, so the tool allocates the deficit rather than the
   total. If `geomet_domain` is blank, the tool derives it by re-running the interval
-  pipeline against the recorded depths.
+  pipeline against the recorded depths. Their depths also mark core that is already
+  used: with `mass.prior_testwork_core: exclude` (the default) every interval that
+  overlaps a recorded sample breaks runs and supplies no candidates, and is listed in
+  the gap register (section 5.6). A record with no depths cannot be placed and is a WARN
+  (`prior_testwork_unlocated`) naming the hole, so it can be checked by hand.
 - **Planned holes**: collar and planned survey for holes not yet drilled. Candidates from
   these carry `is_planned = True` and are reported separately.
 
@@ -188,7 +192,10 @@ readers must absorb without hand-editing:
 ## 4. Configuration
 
 Single YAML file per project. This file plus the input CSVs is a complete, reproducible
-record of how a sample list was produced. A config hash is written into every output.
+record of how a sample list was produced. The config hash, a SHA-256 of every input
+file, and a run hash combining them are written into the `Summary` of every run, so a pick
+list can be tied to the exact files it came from. The config hash alone is not enough:
+re-exporting a CSV under the same name changes the answer without changing the config.
 
 ### 4.1 Schema
 
@@ -370,6 +377,7 @@ mass:
   default_core_diameter_mm: 63.5
   default_remaining_fraction: 0.5
   loss_factor: 0.90             # PLACEHOLDER, calibrate against past programmes
+  prior_testwork_core: exclude  # exclude | available: see section 5.6
 
 allocation:
   method: neyman                # proportional | neyman | manual
@@ -502,6 +510,11 @@ shallowest row and the bottom of the deepest). These supplied-geometry checks ar
 
 **Fail on ERROR by default**, with `--force` to continue. Write `validation_report.csv`.
 
+`geomet-sampler validate` runs the load checks and then builds geometry, so the hole
+orientation, off-model and domain-match checks and `plots/hole_orientation.png` are part
+of validation. If loading already reported ERRORs, geometry is skipped and an INFO issue
+(`geometry_checks_skipped`) says so.
+
 All checks operate on canonical field names. Where an issue must name a source column for
 the user's benefit, the reader's mapping table is used to translate back.
 
@@ -580,7 +593,12 @@ Within each hole, walk intervals in depth order and start a new run when any of:
 - Low recovery flag set and `break_on_low_recovery` is true
 - Primary grade missing and `break_on_missing_primary_grade` is true
 - Interval flagged `outside_model`
+- Interval overlaps earlier testwork and `mass.prior_testwork_core` is `exclude`
 - Hole changes
+
+An unusable interval (low recovery, missing primary grade, outside the model, consumed by
+earlier testwork) ends the run before it and starts its own; the next interval starts a
+fresh run with reason `after_unusable`, so no composite can be built across it.
 
 Output: run ID per interval, plus a run summary (length, domain, period, mass).
 
@@ -595,6 +613,14 @@ Per interval:
 area_m2   = pi * (core_diameter_mm / 2000) ** 2
 mass_kg   = length_m * area_m2 * remaining_fraction * density_t_m3 * 1000 * loss_factor
 ```
+
+**Core used by earlier testwork.** `mass.prior_testwork_core` states what earlier
+testwork did to the core it used. `exclude` (default) treats every overlapping interval as
+consumed: it breaks runs, supplies nothing, and appears in the gap register as
+`prior_testwork` with the testwork sample IDs. `available` leaves the core in play, for
+programmes where testwork took a split and the rest is still in the tray. Either way the
+records still reduce the domain targets (section 5.8). A per-record remaining fraction is
+not modelled; see section 9, item 7.
 
 Sanity values at SG 2.7, half core, loss factor 1.0:
 
@@ -714,7 +740,8 @@ swapped in behind the same interface if greedy proves inadequate.
 
 **Excel workbook**, sheets:
 
-1. `Summary`: run parameters, counts, config hash
+1. `Summary`: run parameters, counts, config hash, run hash, and each input file's name
+   and SHA-256
 2. `Allocation`: domain, tonnes, %, weighted %, target, existing, deficit, achieved
 3. `Composites`: one row per selected composite, with all attributes and the reason string
 4. `Pick_List`: one row per interval within each selected composite, sorted by hole then
@@ -827,8 +854,12 @@ geomet-sampler select    --config project.yaml --out picks.xlsx
 geomet-sampler run       --config project.yaml     # full pipeline
 ```
 
-Each stage caches its output to `output_dir` so later stages can be rerun without
-repeating the expensive steps.
+Each stage caches its output under `output_dir/.cache/<run hash>` so later stages can be
+rerun (`--use-cache`) without repeating the expensive steps. The run hash covers the config
+and every input file, so changing either one invalidates the cache.
+
+`validate` builds geometry as well as loading (section 5.1). `validate`, `desurvey` and
+`run` all write `plots/hole_orientation.png` and end with a reminder to check it.
 
 ---
 
@@ -884,7 +915,9 @@ M1 to M5 is the usable product. M6 makes it presentable. M7 makes it distributab
    period weights need to be defined at that resolution or aggregated up.
 7. **Existing testwork with partial coverage.** A prior sample that only had comminution
    done should probably count partially toward a comminution plus flotation deficit.
-   Currently counted as full coverage.
+   Currently counted as full coverage. Similarly for core: `prior_testwork_core` is all or
+   nothing per interval. Recording what fraction of core each sample took would let the
+   mass estimate reduce `remaining_fraction` instead of excluding the interval.
 8. **Attribute role vocabulary.** Role names are free-form. Consider a small reserved set
    (`weathering`, `rock_type`) that reporting can style specially, while still allowing
    arbitrary additions.

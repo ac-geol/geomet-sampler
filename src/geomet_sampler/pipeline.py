@@ -4,10 +4,11 @@ All logic lives in the stage functions below and the modules they call. The CLI 
 config, calls one of these, and writes the result. A UI would be a third caller of the
 same functions.
 
-Each stage caches its result under the output directory, keyed by the config hash, so a
-later stage can be rerun without repeating the expensive geometry and candidate work. A
-config change changes the hash and invalidates the cache, which is the point: a cached
-result must never outlive the config that produced it.
+Each stage caches its result under the output directory, keyed by the run hash (the
+config plus a hash of every input file), so a later stage can be rerun without repeating
+the expensive geometry and candidate work. Changing the config or any input file changes
+the key and invalidates the cache, which is the point: a cached result must never outlive
+the config and data that produced it.
 """
 
 from __future__ import annotations
@@ -20,7 +21,13 @@ from typing import Any
 import pandas as pd
 
 from . import models as M
-from .allocate.targets import compute_targets, existing_coverage, tonnage_by_period, unmet_gaps
+from .allocate.targets import (
+    compute_targets,
+    existing_coverage,
+    mark_prior_testwork,
+    tonnage_by_period,
+    unmet_gaps,
+)
 from .blockmodel.assign import assign_blocks, record_domain_match, resolve_attributes
 from .composite.candidates import generate_candidates, pick_list
 from .config import Config
@@ -70,7 +77,7 @@ class PipelineState:
 
 
 def cache_dir(cfg: Config) -> Path:
-    path = cfg.project.output_dir / CACHE_DIRNAME / cfg.config_hash
+    path = cfg.project.output_dir / CACHE_DIRNAME / cfg.run_hash
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -140,6 +147,10 @@ def stage_geometry(state: PipelineState) -> PipelineState:
         loss_factor=cfg.mass.loss_factor,
         default_density_t_m3=cfg.sources.intervals.density.fallback_constant,
     )
+    framework, issues = mark_prior_testwork(
+        framework, dataset.existing_testwork, policy=cfg.mass.prior_testwork_core
+    )
+    state.report.extend(issues)
 
     state.traces = traces
     state.intervals = framework
@@ -269,7 +280,11 @@ def _summarise(state: PipelineState) -> dict[str, Any]:
         "project": cfg.project.name,
         "config": str(cfg.config_path),
         "config_hash": cfg.config_hash,
+        "run_hash": cfg.run_hash,
     }
+    for name, digest in cfg.input_hashes.items():
+        source = getattr(cfg.sources, name)
+        summary[f"input:{name}"] = f"{source.path.name} sha256:{digest}"
     dataset = state.dataset
     if dataset.samples is not None:
         summary["geometry_source"] = "supplied by desurveyed samples table"
@@ -359,6 +374,31 @@ def run_pipeline(
     return state
 
 
+def run_validation(cfg: Config) -> PipelineState:
+    """Every check the data can be put through without selecting anything.
+
+    Load checks always run. Geometry is then built too, so the orientation, off-model
+    and domain-match checks and the hole orientation view are part of validation. If
+    loading already found ERRORs, geometry is skipped, because building it on data known
+    to be wrong would add noise to the report rather than information; an INFO issue
+    says so, so its absence is never silent.
+    """
+    state = stage_load(cfg)
+    if state.report.has_errors():
+        state.report.add(
+            Issue(
+                Severity.INFO,
+                "geometry_checks_skipped",
+                "geometry was not built because loading reported errors, so the hole "
+                "orientation, off-model and domain-match checks did not run. Fix the "
+                "errors above and validate again.",
+                source="geometry",
+            )
+        )
+        return state
+    return stage_geometry(state)
+
+
 def _halt_on_errors(state: PipelineState, force: bool) -> None:
     errors = state.report.errors
     if not errors or force:
@@ -389,6 +429,7 @@ __all__ = [
     "Severity",
     "gap_frame",
     "run_pipeline",
+    "run_validation",
     "stage_allocate",
     "stage_candidates",
     "stage_geometry",

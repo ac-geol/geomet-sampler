@@ -23,6 +23,8 @@ BREAK_LOW_RECOVERY = "low_recovery"
 BREAK_MISSING_GRADE = "missing_primary_grade"
 BREAK_OUTSIDE_MODEL = "outside_model"
 BREAK_UNAVAILABLE = "unavailable"
+BREAK_PRIOR_TESTWORK = "prior_testwork"
+BREAK_AFTER_UNUSABLE = "after_unusable"
 
 
 def segment_runs(
@@ -87,11 +89,15 @@ def segment_runs(
         off = out[M.OUTSIDE_MODEL].fillna(True).astype(bool)
         _mark_series(starts, reason, off, BREAK_OUTSIDE_MODEL)
         unusable |= off
+    if M.PRIOR_TESTWORK in out.columns:
+        consumed = out[M.PRIOR_TESTWORK].fillna(False).astype(bool)
+        _mark_series(starts, reason, consumed, BREAK_PRIOR_TESTWORK)
+        unusable |= consumed
 
     # the interval after an unusable one also starts fresh
     follows_unusable = np.zeros(n, dtype=bool)
     follows_unusable[1:] = unusable.to_numpy()[:-1]
-    _mark(starts, reason, follows_unusable & ~new_hole & ~starts, "after_" + BREAK_LOW_RECOVERY)
+    _mark(starts, reason, follows_unusable & ~new_hole & ~starts, BREAK_AFTER_UNUSABLE)
 
     run_index = np.cumsum(starts) - 1
     out[M.RUN_ID] = [f"R{i:06d}" for i in run_index]

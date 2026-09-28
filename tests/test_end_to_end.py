@@ -242,3 +242,43 @@ def test_init_writes_a_draft_marked_for_confirmation(project_root, tmp_path):
     assert "hole_id: HoleID" in text
     assert "dip_convention: negative_down" in text
     assert "Zn" in text
+
+
+def test_validate_builds_geometry_and_writes_the_orientation_view(project_root, tmp_path):
+    """The orientation, off-model and domain-match checks belong in validation."""
+    result = runner.invoke(app, ["validate", "--config", str(project_root / "project.yaml")])
+    assert result.exit_code == 0, result.output
+    assert "IMPORTANT: check hole orientation" in result.output
+    assert (project_root / "output" / "plots" / "hole_orientation.png").exists()
+
+
+def test_validation_includes_the_geometry_checks(cfg):
+    from geomet_sampler.pipeline import run_validation
+
+    state = run_validation(cfg)
+    assert state.intervals is not None and state.hole_ends is not None
+    assert "geometry_checks_skipped" not in {i.check for i in state.report.issues}
+
+
+def test_validation_skips_geometry_and_says_so_when_loading_failed(project_root, tmp_path):
+    import yaml
+
+    from geomet_sampler.pipeline import run_validation
+
+    raw = yaml.safe_load((project_root / "project.yaml").read_text())
+    raw["allocation"]["total_samples"] = 6
+    lookup = tmp_path / "lookup.csv"
+    lookup.write_text("logged_code,geomet_domain\nVOLC,VOLCANIC\n")  # TUFF and SDST missing
+    raw["sources"] = {
+        k: ({**v, "path": str(project_root / v["path"])} if isinstance(v, dict) else v)
+        for k, v in raw["sources"].items()
+    }
+    raw["sources"]["domain_lookup"]["path"] = str(lookup)
+    config = tmp_path / "broken.yaml"
+    config.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    state = run_validation(load_config(config))
+    checks = {i.check for i in state.report.issues}
+    assert "logged_code_unmapped" in checks
+    assert "geometry_checks_skipped" in checks
+    assert state.intervals is None

@@ -52,10 +52,11 @@ def present(frame: pd.DataFrame, cfg: Config, *, round_to: int = 3) -> pd.DataFr
             if prefix in out.columns:
                 renames[prefix] = label
 
-    if M.INTERVAL_IDS_COL in out.columns:
-        out[M.INTERVAL_IDS_COL] = out[M.INTERVAL_IDS_COL].map(
-            lambda v: ", ".join(map(str, v)) if isinstance(v, tuple | list) else v
-        )
+    for column in (M.INTERVAL_IDS_COL, M.PRIOR_TESTWORK_IDS):
+        if column in out.columns:
+            out[column] = out[column].map(
+                lambda v: ", ".join(map(str, v)) if isinstance(v, tuple | list) else v
+            )
 
     out = out.rename(columns=_disambiguate(renames, suffixes))
     numeric = out.select_dtypes("float")

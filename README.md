@@ -35,8 +35,10 @@ That writes `picks.xlsx`, the CSV set, the validation report and the charts into
 configured `output_dir`.
 
 Stages can also be run individually. Each caches its result under `output_dir/.cache`,
-keyed by a hash of the config, so a later stage can be rerun without repeating the
-geometry and candidate work:
+keyed by a hash of the config and of every input file, so a later stage can be rerun
+with `--use-cache` without repeating the geometry and candidate work, and a changed data
+file is never answered from an old cache. `validate` builds the geometry too, so run it
+first on any new dataset and check `plots/hole_orientation.png`:
 
 The example dataset is not stored in the repository. Generate it first:
 
@@ -93,7 +95,7 @@ break composites. See `config/example_project_samples.yaml` and SPEC section 3.4
 
 | Sheet | What it is |
 |---|---|
-| `Summary` | run parameters, counts, config hash |
+| `Summary` | run parameters, counts, config hash, and each input file with its SHA-256 |
 | `Allocation` | domain, tonnes, %, weighted %, target, existing, deficit, achieved |
 | `Composites` | one row per selected composite, with attributes and the reason it was chosen |
 | `Pick_List` | one row per interval to cut, sorted by hole then depth. The core shed worksheet. |
@@ -120,6 +122,8 @@ mine plan grade against selected sample grade.
    bin and variability constraints.
 8. **Allocation.** Scheduled block tonnage, weighted toward early periods, split into
    per-domain targets by proportional or Neyman allocation, less existing testwork.
+   Core that existing testwork already used is excluded from candidates by default
+   (`mass.prior_testwork_core`), and listed in the gap register.
 9. **Selection.** Greedy scoring with a swap improvement pass. Every pick records why.
 
 ## Design rules

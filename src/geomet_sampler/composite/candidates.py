@@ -81,6 +81,25 @@ def _usable_intervals(intervals: pd.DataFrame) -> tuple[pd.DataFrame, list[GapEn
                 )
             )
         df = df[~unavailable]
+    if M.PRIOR_TESTWORK in df.columns:
+        consumed = df[M.PRIOR_TESTWORK].fillna(False).astype(bool)
+        if consumed.any():
+            ids = sorted({i for v in df.loc[consumed, M.PRIOR_TESTWORK_IDS] for i in v})
+            gaps.append(
+                GapEntry(
+                    scope="supply",
+                    key="prior_testwork",
+                    reason=f"{int(consumed.sum())} intervals in available holes overlap core "
+                    f"already used by {len(ids)} earlier testwork samples and supply no "
+                    "candidates (mass.prior_testwork_core: exclude). Consumed core in "
+                    "unavailable holes is counted under unavailable_core instead.",
+                    detail={
+                        "n_intervals": int(consumed.sum()),
+                        "holes": ", ".join(sorted(set(df.loc[consumed, M.HOLE_ID]))[:20]),
+                        "testwork_samples": ", ".join(ids[:20]),
+                    },
+                )
+            )
     if "usable" in df.columns:
         df = df[df["usable"].fillna(False).astype(bool)]
     return df, gaps

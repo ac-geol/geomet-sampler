@@ -31,6 +31,9 @@ Every recommendation must be explainable to a reviewer.
   code that enumerates a known list of rock types, weathering states or elements.
 - Prefer plain functions over classes. Use dataclasses for structured records.
 - Write the test with the function, not afterwards.
+- Provenance covers data as well as config. `cfg.run_hash` combines the config hash with a
+  SHA-256 of every input file; the stage cache is keyed on it and the Summary lists each
+  file's hash. Never key a cache or a provenance record on the config alone.
 
 ## Non-negotiable correctness rules
 
@@ -43,7 +46,9 @@ These are the things that make the output wrong in ways that are hard to spot:
 2. **Every composite must trace back to its constituent sample intervals.** The pick list
    is the actual deliverable. A composite without its interval list is useless.
 3. **Mass must be checked before a candidate is valid.** A recommendation the user cannot
-   physically collect is worse than no recommendation.
+   physically collect is worse than no recommendation. That includes core used by earlier
+   testwork: with `mass.prior_testwork_core: exclude` (default) it breaks runs like any
+   other unusable interval, never merely filtered out of candidates afterwards.
 4. **Selection must be deterministic** under a fixed seed. Ties break on explicit,
    documented criteria.
 5. **Never silently drop records.** Anything excluded goes to the validation report or the
@@ -109,6 +114,7 @@ uv run ruff check --fix .
 uv run ruff format .
 uv run python scripts/make_example_data.py   # build data/ (not tracked)
 uv run geomet-sampler init --collar ... --out config/project.yaml
+uv run geomet-sampler validate --config config/example_project.yaml  # load + geometry checks
 uv run geomet-sampler run --config config/example_project.yaml
 uv run geomet-sampler run --config config/example_project_samples.yaml   # one desurveyed table
 ```

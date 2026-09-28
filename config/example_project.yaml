@@ -178,6 +178,7 @@ mass:
   default_core_diameter_mm: 63.5
   default_remaining_fraction: 0.5
   loss_factor: 0.90               # PLACEHOLDER: calibrate against past programmes
+  prior_testwork_core: exclude    # exclude | available: see SPEC 5.6
 
 allocation:
   method: neyman                  # proportional | neyman | manual
