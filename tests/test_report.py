@@ -8,7 +8,7 @@ import pytest
 from geomet_sampler import models as M
 from geomet_sampler.io.writers import present, write_csv, write_workbook
 from geomet_sampler.report.excel import build_sheets, write_outputs, write_validation_report
-from geomet_sampler.report.plots import write_plots
+from geomet_sampler.report.plots import orientation_notice, write_hole_orientation, write_plots
 
 
 def test_grades_are_converted_back_to_their_declared_units(cfg):
@@ -119,3 +119,19 @@ def test_plots_are_skipped_rather_than_failing_when_nothing_was_selected(pipelin
         assert [p.stem for p in written] == ["allocation_target_vs_achieved"]
     finally:
         pipeline.selected = original
+
+
+def test_the_hole_orientation_view_is_written_and_called_out(pipeline, tmp_path):
+    pipeline.cfg.project.output_dir = tmp_path / "out"
+    path = write_hole_orientation(pipeline)
+    assert path is not None and path.exists()
+    assert path == tmp_path / "out" / "plots" / "hole_orientation.png"
+    notice = orientation_notice(pipeline, path)
+    assert notice.startswith("IMPORTANT")
+    assert str(path) in notice
+
+
+def test_the_orientation_view_does_not_depend_on_include_plots(pipeline, tmp_path):
+    pipeline.cfg.project.output_dir = tmp_path / "out"
+    pipeline.cfg.reporting.include_plots = False
+    assert write_hole_orientation(pipeline).exists()

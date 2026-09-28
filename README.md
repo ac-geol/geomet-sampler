@@ -71,6 +71,22 @@ an explicit mapping or errors, because a mapping guessed at runtime is a mapping
 checked. The draft always needs review; you must still supply the domain lookup, the
 hole availability file, and the testwork mass parameters by hand.
 
+### Already-desurveyed data
+
+If your drillhole data come as one desurveyed table (hole, from, to, logged code, and
+from/to/mid coordinates on every row, with assays where sampled), use it in place of the
+collar, survey, assay and litho files:
+
+```bash
+uv run geomet-sampler init --out config/project.yaml \
+    --samples data/desurveyed.csv --block-model data/bm.csv
+```
+
+The coordinates are used as supplied. The validation report compares each row's
+coordinates with its depths: a length ratio near 3.28 or 0.305 is an ERROR (feet against
+metres). Unsampled rows are kept and
+break composites. See `config/example_project_samples.yaml` and SPEC section 3.4a.
+
 ## Output
 
 `picks.xlsx`, in the order a reviewer reads it:
@@ -138,8 +154,11 @@ Column names fail loudly. Conventions fail silently, which makes them the larger
 all of them are declared explicitly in config with no guessing default, and two checks
 exist specifically to catch a wrong one:
 
-- after desurvey, any hole whose toe is above its collar RL is an ERROR, which catches an
-  inverted dip convention immediately;
+- **check `plots/hole_orientation.png` on every new dataset.** It shows each hole's collar
+  and toe in plan and section, with holes that end above their collar in red. Upward
+  holes from underground are fine, so they are listed rather than rejected, but if more
+  than half the holes rise the run warns that the dip convention or Z is probably
+  inverted. A hole loaded upside down corrupts every result after it;
 - if most intervals fall outside the block model extents, that is an ERROR about
   coordinate systems and units rather than a note about off-model drilling.
 

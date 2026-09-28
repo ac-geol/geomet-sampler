@@ -48,6 +48,14 @@ PERIOD = "period"
 X_FROM, Y_FROM, Z_FROM = "x_from", "y_from", "z_from"
 X_TO, Y_TO, Z_TO = "x_to", "y_to", "z_to"
 X_MID, Y_MID, Z_MID = "x_mid", "y_mid", "z_mid"
+FROM_XYZ = (X_FROM, Y_FROM, Z_FROM)
+TO_XYZ = (X_TO, Y_TO, Z_TO)
+MID_XYZ = (X_MID, Y_MID, Z_MID)
+
+# hole ends, for the orientation check and section view
+COLLAR_XYZ = ("collar_x", "collar_y", "collar_z")
+TOE_XYZ = ("toe_x", "toe_y", "toe_z")
+RISES = "rises_with_depth"
 
 # derived pipeline fields
 INTERVAL_ID = "interval_id"
@@ -69,6 +77,8 @@ COLLAR_REQUIRED = (HOLE_ID, EAST, NORTH, RL)
 SURVEY_REQUIRED = (HOLE_ID, DEPTH, DIP, AZIMUTH)
 INTERVAL_REQUIRED = (HOLE_ID, FROM_M, TO_M)
 LITHO_REQUIRED = (HOLE_ID, FROM_M, TO_M, LOGGED_CODE)
+#: A pre-desurveyed samples table replaces collar, survey, assay and litho together.
+SAMPLES_REQUIRED = (HOLE_ID, FROM_M, TO_M, LOGGED_CODE, *FROM_XYZ, *TO_XYZ, *MID_XYZ)
 BLOCK_REQUIRED = (BLOCK_X, BLOCK_Y, BLOCK_Z, BLOCK_DX, BLOCK_DY, BLOCK_DZ, PERIOD)
 
 #: Domaining keys that are not user-declared attribute roles.

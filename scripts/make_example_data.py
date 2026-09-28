@@ -10,6 +10,8 @@ quirks the readers must absorb, so running the example exercises the awkward pat
 - lithology file with lowercase ``holeid`` / ``from`` / ``to`` headers
 - partial coverage: not every collar has assays or lithology
 - a block model carrying a PERIOD field, which the real example lacks
+- the same drilling as one desurveyed samples table, including unsampled rows, for
+  config/example_project_samples.yaml
 
 Run with:  uv run python scripts/make_example_data.py
 """
@@ -22,6 +24,7 @@ import math
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
@@ -308,7 +311,87 @@ def main() -> None:
         ["sample_id", "HoleID", "from_m", "to_m", "geomet_domain", "test_package"],
         testwork_rows,
     )
+    write_desurveyed_samples()
     print("done")
+
+
+def write_desurveyed_samples() -> None:
+    """One desurveyed table equivalent to the collar, survey, assay and litho files.
+
+    Built by running the library's own desurvey and merge over the files just written,
+    so it describes exactly the same intervals. Holes that were logged but never
+    assayed contribute their logged intervals as unsampled rows: blank sample ID, blank
+    grades, coordinates still present. That is how such a table usually looks.
+    """
+    from geomet_sampler import models as M
+    from geomet_sampler.config import load_config
+    from geomet_sampler.desurvey import build_traces, desurvey_intervals
+    from geomet_sampler.intervals.merge import build_framework
+    from geomet_sampler.io.readers import load_all
+
+    cfg = load_config(ROOT / "config" / "example_project.yaml")
+    dataset, _ = load_all(cfg)
+    traces, _ = build_traces(dataset.collar, dataset.survey, fill_collar_survey=True)
+    framework, _ = build_framework(dataset.assay, dataset.litho, dataset.domain_lookup)
+
+    unsampled = dataset.litho[~dataset.litho[M.HOLE_ID].isin(set(dataset.assay[M.HOLE_ID]))]
+    unsampled = unsampled.assign(**{M.PARENT_SAMPLE_ID: None})
+    rows = pd.concat([framework, unsampled], ignore_index=True)
+    rows, _ = desurvey_intervals(rows, traces)
+    rows = rows.dropna(subset=[M.X_MID]).sort_values([M.HOLE_ID, M.FROM_M])
+
+    lab_numbers = {
+        parent: f"DS{n:06d}"
+        for n, parent in enumerate(rows[M.PARENT_SAMPLE_ID].dropna().unique(), start=1)
+    }
+
+    def number(value) -> str:
+        return "" if pd.isna(value) else f"{value:.3f}"
+
+    out = []
+    for r in rows.itertuples(index=False):
+        row = r._asdict()
+        sampled = pd.notna(row[M.PARENT_SAMPLE_ID])
+        out.append(
+            [
+                row[M.HOLE_ID],
+                lab_numbers.get(row[M.PARENT_SAMPLE_ID], ""),
+                number(row[M.FROM_M]),
+                number(row[M.TO_M]),
+                row[M.LOGGED_CODE] or "",
+                *(number(row[c]) for c in (*M.FROM_XYZ, *M.TO_XYZ, *M.MID_XYZ)),
+                number(row["elem_Zn"] / 10_000.0) if sampled else "",
+                number(row["elem_Pb"] / 10_000.0) if sampled else "",
+                number(row["elem_Ag"]) if sampled else "",
+                number(row[M.DENSITY]) if sampled else "",
+                ("Y" if row[M.LOW_RECOVERY] else "N") if sampled else "",
+            ]
+        )
+    write_csv(
+        DATA / "DEMO_Samples_Desurveyed_0001.csv",
+        [
+            "HoleID",
+            "SampleID",
+            "From_m",
+            "To_m",
+            "Lith",
+            "X_From",
+            "Y_From",
+            "Z_From",
+            "X_To",
+            "Y_To",
+            "Z_To",
+            "X_Mid",
+            "Y_Mid",
+            "Z_Mid",
+            "Zn_pct",
+            "Pb_pct",
+            "Ag_ppm",
+            "BD_tonnes_m3",
+            "LowRecovery",
+        ],
+        out,
+    )
 
 
 if __name__ == "__main__":

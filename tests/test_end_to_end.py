@@ -207,11 +207,13 @@ def test_validation_errors_stop_the_run_unless_forced(project_root, tmp_path, mo
     }
     broken.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
-    with pytest.raises(ValidationFailedError, match="toe_above_collar"):
+    # the holes now fly above the model, which the extent check stops
+    with pytest.raises(ValidationFailedError, match="off_model_extent"):
         run_pipeline(load_config(broken))
 
     forced = run_pipeline(load_config(broken), force=True)
     assert forced.report.has_errors()
+    assert "most_holes_rise" in {i.check for i in forced.report.warnings}
 
 
 def test_init_writes_a_draft_marked_for_confirmation(project_root, tmp_path):

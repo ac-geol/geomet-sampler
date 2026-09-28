@@ -9,6 +9,10 @@ drillhole data and a period-coded block model, works out which geological domain
 plan will actually mine, checks what testwork already exists, and recommends the exact core
 intervals to sample next.
 
+Drillhole data arrive either as separate collar, survey, assay and litho files, or as one
+pre-desurveyed samples table (`sources.samples`, SPEC 3.4a). The two layouts must produce
+identical results on the same intervals; `tests/test_samples_source.py` holds that test.
+
 The user is a senior geologist. Correctness and auditability matter more than cleverness.
 Every recommendation must be explainable to a reviewer.
 
@@ -50,8 +54,10 @@ These are the things that make the output wrong in ways that are hard to spot:
 7. **Normalise units and conventions at load, once.** Dips to negative-down, lengths to
    metres, densities to t/m3, grades to their declared units. No module downstream of the
    reader does any convention handling. Conventions fail silently and are a larger risk than
-   column names, so the validation suite includes the toe-above-collar check and the
-   off-model-extent check specifically to catch them.
+   column names, so the validation suite includes the hole orientation check (WARN when
+   most holes rise, plus the always-written `hole_orientation.png` section view) and the
+   off-model-extent check specifically to catch them. Upward holes are legitimate
+   underground drilling: never make a single rising hole an ERROR.
 8. **Never guess a mapping at runtime.** Guessing belongs only in `geomet-sampler init`,
    which writes a draft config for human review with `# CONFIRM` on every inference. The
    pipeline itself either has an explicit mapping or errors.
@@ -104,6 +110,7 @@ uv run ruff format .
 uv run python scripts/make_example_data.py   # build data/ (not tracked)
 uv run geomet-sampler init --collar ... --out config/project.yaml
 uv run geomet-sampler run --config config/example_project.yaml
+uv run geomet-sampler run --config config/example_project_samples.yaml   # one desurveyed table
 ```
 
 ## A useful smoke test

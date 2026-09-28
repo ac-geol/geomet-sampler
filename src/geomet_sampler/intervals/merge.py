@@ -86,6 +86,61 @@ def build_framework(
     return framework.sort_values([M.HOLE_ID, M.FROM_M]).reset_index(drop=True), issues
 
 
+def framework_from_samples(
+    samples: pd.DataFrame, domain_lookup: pd.DataFrame
+) -> tuple[pd.DataFrame, list[Issue]]:
+    """Use a pre-desurveyed samples table as the framework, one row per interval.
+
+    Nothing is split: the table's own rows are the finest boundaries available, and a
+    row cannot be divided without inventing coordinates inside it. Runs still break
+    wherever the logged code changes between rows. A sample the source system assigned
+    to one code while it physically straddled a contact is invisible from here, which is
+    reported so a reviewer knows the boundaries were inherited rather than rebuilt.
+    """
+    framework = _rename_sample_id(samples.reset_index(drop=True))
+    framework[M.LENGTH_M] = framework[M.TO_M] - framework[M.FROM_M]
+    framework, issues = _attach_domain(framework, domain_lookup)
+
+    issues.append(
+        Issue(
+            Severity.INFO,
+            "boundaries_inherited",
+            "intervals taken from the desurveyed samples table as supplied; compositing "
+            "boundaries are its rows, not rebuilt from separate assay and litho files",
+            source="samples",
+        )
+    )
+    unlogged = int(framework[M.LOGGED_CODE].isna().sum())
+    if unlogged:
+        issues.append(
+            Issue(
+                Severity.WARN,
+                "interval_not_logged",
+                f"{unlogged} sample rows have a blank logged code; "
+                "they carry no domain and are excluded from candidates",
+                source="samples",
+                count=unlogged,
+            )
+        )
+    shared = framework[M.PARENT_SAMPLE_ID].duplicated(keep=False)
+    if shared.any():
+        n = int(framework.loc[shared, M.PARENT_SAMPLE_ID].nunique())
+        issues.append(
+            Issue(
+                Severity.INFO,
+                "sample_split_upstream",
+                f"{n} sample IDs appear on more than one row, usually a sample split at a "
+                "logged contact by the software that built the table; each row keeps its "
+                "own interval and the shared sample ID",
+                source="samples",
+                count=n,
+            )
+        )
+
+    framework[M.INTERVAL_ID] = _interval_ids(framework)
+    return framework.sort_values([M.HOLE_ID, M.FROM_M]).reset_index(drop=True), issues
+
+
 # ------------------------------------------------------------------- splitting
 
 

@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from .. import models as M
-from ..config import Config, GradeUnits, SourceBase
+from ..config import AssaySource, Config, GradeUnits, SourceBase
 from ..errors import MappingError
 from ..models import Availability, Issue, Severity
 from ..units import (
@@ -35,13 +35,16 @@ ENCODING_CANDIDATES = ("utf-8-sig", "utf-8", "cp1252")
 class Dataset:
     """Every input, in canonical names and normalised units."""
 
-    collar: pd.DataFrame
-    survey: pd.DataFrame
-    assay: pd.DataFrame
-    litho: pd.DataFrame
     domain_lookup: pd.DataFrame
     block_model: pd.DataFrame
     availability: pd.DataFrame
+    #: separate-file layout; all four are None when a samples table is supplied
+    collar: pd.DataFrame | None = None
+    survey: pd.DataFrame | None = None
+    assay: pd.DataFrame | None = None
+    litho: pd.DataFrame | None = None
+    #: pre-desurveyed layout: assay fields, logged code and coordinates in one table
+    samples: pd.DataFrame | None = None
     existing_testwork: pd.DataFrame | None = None
     planned_collar: pd.DataFrame | None = None
     planned_survey: pd.DataFrame | None = None
@@ -176,14 +179,50 @@ def read_survey(
 def read_assay(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
     src = cfg.sources.assay
     raw = _read_text(src.path, src.encoding)
-    problems = _check_mapping(raw, src, "sources.assay")
+    _raise_if(_interval_mapping_problems(raw, src, "sources.assay", cfg))
+    out, issues = _interval_fields(raw, src, "assay", cfg)
+    return out.sort_values([M.HOLE_ID, M.FROM_M]).reset_index(drop=True), issues
+
+
+def read_samples(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
+    """Read a pre-desurveyed samples table: assay fields, logged code and coordinates.
+
+    Coordinates go through the same length conversion as depths, once, here. Rows with a
+    blank logged code keep ``None`` rather than being dropped, so they reach the
+    framework and the validation report exactly as unlogged assay intervals do.
+    """
+    src = cfg.sources.samples
+    raw = _read_text(src.path, src.encoding)
+    problems = _interval_mapping_problems(raw, src, "sources.samples", cfg)
+    missing = [c for c in M.SAMPLES_REQUIRED if src.user_column(c) is None]
+    if missing:
+        problems.append(
+            f"sources.samples.columns: {', '.join(missing)} must be mapped. A desurveyed "
+            "samples table needs the logged code and the from, to and mid coordinates."
+        )
+    _raise_if(problems)
+
+    out, issues = _interval_fields(raw, src, "samples", cfg)
+    df = _rename(raw, src)
+    code = df[M.LOGGED_CODE].astype(str).str.strip()
+    out[M.LOGGED_CODE] = code.where(code != "", None)
+    for col in (*M.FROM_XYZ, *M.TO_XYZ, *M.MID_XYZ):
+        out[col] = length_to_metres(_to_num(df, col), cfg.conventions.length_units)
+    return out.sort_values([M.HOLE_ID, M.FROM_M]).reset_index(drop=True), issues
+
+
+def _interval_mapping_problems(
+    raw: pd.DataFrame, src: AssaySource, label: str, cfg: Config
+) -> list[str]:
+    """Every configured column an assay-like source refers to must be in the file."""
+    problems = _check_mapping(raw, src, label)
     problems += _extra_column_problems(
-        raw, {"source": src.density.source}, "sources.assay.density", src.path
+        raw, {"source": src.density.source}, f"{label}.density", src.path
     )
     problems += _extra_column_problems(
         raw,
         {f"{name}.source": spec.source for name, spec in src.flags.items()},
-        "sources.assay.flags",
+        f"{label}.flags",
         src.path,
     )
     problems += _extra_column_problems(
@@ -192,8 +231,13 @@ def read_assay(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
         "elements",
         src.path,
     )
-    _raise_if(problems)
+    return problems
 
+
+def _interval_fields(
+    raw: pd.DataFrame, src: AssaySource, source_name: str, cfg: Config
+) -> tuple[pd.DataFrame, list[Issue]]:
+    """Depths, sample ID, density, flags, grades and attributes, in canonical form."""
     df = _rename(raw, src)
     conv = cfg.conventions
     issues: list[Issue] = []
@@ -202,23 +246,38 @@ def read_assay(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
     out[M.FROM_M] = length_to_metres(_to_num(df, M.FROM_M), conv.length_units)
     out[M.TO_M] = length_to_metres(_to_num(df, M.TO_M), conv.length_units)
 
+    generated = (
+        out[M.HOLE_ID] + "_" + out[M.FROM_M].map(lambda v: f"{v:.2f}" if pd.notna(v) else "NA")
+    )
     if M.SAMPLE_ID in df.columns:
-        out[M.SAMPLE_ID] = _clean_id(df[M.SAMPLE_ID])
+        ids = _clean_id(df[M.SAMPLE_ID])
+        blank = ids == ""
+        out[M.SAMPLE_ID] = ids.where(~blank, generated)
+        if blank.any():
+            issues.append(
+                Issue(
+                    Severity.WARN,
+                    "sample_id_blank",
+                    f"{int(blank.sum())} rows have a blank sample ID, usually unsampled core. "
+                    "IDs generated as {hole_id}_{from_m} so each row stays traceable; these "
+                    "rows have no lab number for the core shed to match.",
+                    source=source_name,
+                    count=int(blank.sum()),
+                )
+            )
     else:
-        out[M.SAMPLE_ID] = (
-            out[M.HOLE_ID] + "_" + out[M.FROM_M].map(lambda v: f"{v:.2f}" if pd.notna(v) else "NA")
-        )
+        out[M.SAMPLE_ID] = generated
         issues.append(
             Issue(
                 Severity.WARN,
                 "tier2_fallback",
                 "no sample_id column mapped: IDs generated as {hole_id}_{from_m}. "
                 "The pick list is degraded, core shed staff cannot match a lab number.",
-                source="assay",
+                source=source_name,
             )
         )
 
-    out[M.DENSITY], dens_issues = _density_column(df, src.density, conv, "assay")
+    out[M.DENSITY], dens_issues = _density_column(df, src.density, conv, source_name)
     issues += dens_issues
 
     flag = src.flags.get(M.LOW_RECOVERY)
@@ -231,7 +290,7 @@ def read_assay(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
                 Severity.INFO,
                 "tier2_fallback",
                 "no low_recovery flag mapped: no recovery-based compositing breaks",
-                source="assay",
+                source=source_name,
             )
         )
 
@@ -246,7 +305,7 @@ def read_assay(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
 
     for extra in src.carry_through:
         out[extra] = raw[extra]
-    return out.sort_values([M.HOLE_ID, M.FROM_M]).reset_index(drop=True), issues
+    return out, issues
 
 
 def read_litho(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
@@ -475,11 +534,16 @@ def load_all(cfg: Config) -> tuple[Dataset, list[Issue]]:
     problems: list[str] = []
     frames: dict[str, object] = {}
 
-    readers = [
-        ("collar", lambda: read_collar(cfg)),
-        ("survey", lambda: read_survey(cfg)),
-        ("assay", lambda: read_assay(cfg)),
-        ("litho", lambda: read_litho(cfg)),
+    if cfg.sources.uses_samples_table:
+        readers = [("samples", lambda: read_samples(cfg))]
+    else:
+        readers = [
+            ("collar", lambda: read_collar(cfg)),
+            ("survey", lambda: read_survey(cfg)),
+            ("assay", lambda: read_assay(cfg)),
+            ("litho", lambda: read_litho(cfg)),
+        ]
+    readers += [
         ("domain_lookup", lambda: read_domain_lookup(cfg)),
         ("block_model", lambda: read_block_model(cfg)),
         ("availability", lambda: read_availability(cfg)),
@@ -513,10 +577,11 @@ def load_all(cfg: Config) -> tuple[Dataset, list[Issue]]:
         if getattr(cfg.sources, name) is not None
     }
     dataset = Dataset(
-        collar=frames["collar"],
-        survey=frames["survey"],
-        assay=frames["assay"],
-        litho=frames["litho"],
+        collar=frames.get("collar"),
+        survey=frames.get("survey"),
+        assay=frames.get("assay"),
+        litho=frames.get("litho"),
+        samples=frames.get("samples"),
         domain_lookup=frames["domain_lookup"],
         block_model=frames["block_model"],
         availability=frames["availability"],
@@ -545,6 +610,7 @@ __all__ = [
     "read_domain_lookup",
     "read_existing_testwork",
     "read_litho",
+    "read_samples",
     "read_survey",
     "source_column",
 ]

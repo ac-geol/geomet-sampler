@@ -18,7 +18,7 @@ from .init_config import build_draft
 from .io.writers import present, write_csv
 from .pipeline import gap_frame, run_pipeline, summary_frame
 from .report.excel import write_outputs, write_validation_report
-from .report.plots import write_plots
+from .report.plots import orientation_notice, write_hole_orientation, write_plots
 from .validate.checks import report_frame, summarise
 
 app = typer.Typer(
@@ -79,6 +79,7 @@ def desurvey(config: ConfigOption, out: OutOption = None, force: ForceOption = F
     """Desurvey the holes and write the interval table with 3D coordinates."""
     cfg, state = _run(config, "geometry", force)
     _emit(state.intervals, cfg, out, "desurveyed")
+    _notify_orientation(state)
 
 
 @app.command()
@@ -139,6 +140,13 @@ def run(config: ConfigOption, force: ForceOption = False) -> None:
     typer.echo("\nwritten:")
     for name, path in written.items():
         typer.echo(f"  {name:28} {path}")
+    _notify_orientation(state)
+
+
+def _notify_orientation(state) -> None:
+    notice = orientation_notice(state, write_hole_orientation(state))
+    if notice:
+        typer.secho(f"\n{notice}", fg=typer.colors.YELLOW, bold=True)
 
 
 @app.command()
@@ -148,6 +156,14 @@ def init(
     survey: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     assay: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     litho: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    samples: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            help="A desurveyed samples table, in place of collar, survey, assay and litho.",
+        ),
+    ] = None,
     block_model: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     name: str = "New project",
 ) -> None:
@@ -159,6 +175,7 @@ def init(
             ("survey", survey),
             ("assay", assay),
             ("litho", litho),
+            ("samples", samples),
             ("block_model", block_model),
         )
         if path is not None

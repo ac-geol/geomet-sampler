@@ -61,7 +61,9 @@ class GradeUnits(StrEnum):
 
 class Conventions(Strict):
     length_units: LengthUnits
-    dip_convention: DipConvention
+    #: Required whenever a survey is read. A pre-desurveyed samples table carries no
+    #: dips, so it is the one case where this may be left out.
+    dip_convention: DipConvention | None = None
     azimuth_reference: AzimuthReference = AzimuthReference.GRID
     magnetic_declination_deg: float = 0.0
     density_units: DensityUnits = DensityUnits.T_M3
@@ -139,6 +141,15 @@ class LithoSource(SourceBase):
     pass
 
 
+class SamplesSource(AssaySource):
+    """One pre-desurveyed table standing in for collar, survey, assay and litho.
+
+    Carries everything an assay source does, plus the logged code and the from, to and
+    midpoint coordinates of every row. Rows with no assays are allowed; their grades are
+    simply blank.
+    """
+
+
 class DomainLookupSource(SourceBase):
     pass
 
@@ -162,17 +173,54 @@ class ExistingTestworkSource(SourceBase):
     pass
 
 
+#: The drillhole sources a samples table replaces. Either all of these or `samples`.
+SEPARATE_DRILLHOLE_SOURCES = ("collar", "survey", "assay", "litho")
+
+
 class Sources(Strict):
-    collar: CollarSource
-    survey: SurveySource
-    assay: AssaySource
-    litho: LithoSource
+    collar: CollarSource | None = None
+    survey: SurveySource | None = None
+    assay: AssaySource | None = None
+    litho: LithoSource | None = None
+    samples: SamplesSource | None = None
     domain_lookup: DomainLookupSource
     block_model: BlockModelSource
     availability: AvailabilitySource
     existing_testwork: ExistingTestworkSource | None = None
     planned_collar: CollarSource | None = None
     planned_survey: SurveySource | None = None
+
+    @model_validator(mode="after")
+    def _one_drillhole_layout(self) -> Sources:
+        """Separate files or one desurveyed table, never a mixture of the two.
+
+        A mixture would leave two candidate sources for the same geometry or the same
+        logged codes, and picking one would be a guess.
+        """
+        present = [n for n in SEPARATE_DRILLHOLE_SOURCES if getattr(self, n) is not None]
+        if self.samples is not None:
+            if present:
+                raise ValueError(
+                    f"sources.samples replaces {', '.join(SEPARATE_DRILLHOLE_SOURCES)}; "
+                    f"remove {', '.join(present)} or remove samples"
+                )
+            return self
+        missing = [n for n in SEPARATE_DRILLHOLE_SOURCES if n not in present]
+        if missing:
+            raise ValueError(
+                f"sources: missing {', '.join(missing)}. Supply collar, survey, assay and "
+                "litho, or a single desurveyed table under `samples`"
+            )
+        return self
+
+    @property
+    def uses_samples_table(self) -> bool:
+        return self.samples is not None
+
+    @property
+    def intervals(self) -> AssaySource:
+        """The source that carries grades, density and flags, whichever layout is used."""
+        return self.samples if self.samples is not None else self.assay
 
 
 # -------------------------------------------------------- user-declared fields
@@ -376,6 +424,13 @@ class Config(Strict):
     @model_validator(mode="after")
     def _validate(self) -> Config:
         problems: list[str] = []
+
+        surveys = [n for n in ("survey", "planned_survey") if getattr(self.sources, n) is not None]
+        if surveys and self.conventions.dip_convention is None:
+            problems.append(
+                f"conventions.dip_convention is required when {' and '.join(surveys)} "
+                "is supplied: negative_down or positive_down"
+            )
 
         primaries = [n for n, s in self.elements.items() if s.primary]
         if len(primaries) != 1:

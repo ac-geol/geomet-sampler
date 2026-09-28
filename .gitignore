@@ -26,6 +26,7 @@ data/
 # the column names of a client's database. Only the example config is public.
 config/*
 !config/example_project.yaml
+!config/example_project_samples.yaml
 
 # Common drillhole database and mine planning package exports, wherever they land.
 *.mdb

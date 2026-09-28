@@ -27,14 +27,19 @@ from .config import Config
 from .desurvey import build_traces, desurvey_intervals
 from .domains import label_blocks, label_intervals
 from .errors import ValidationFailedError
-from .intervals.merge import build_framework, discretise_planned
+from .intervals.merge import build_framework, discretise_planned, framework_from_samples
 from .io.readers import Dataset, load_all
 from .mass.estimate import estimate_interval_mass
 from .models import GapEntry, Issue, Severity, ValidationReport
 from .segment.runs import segment_runs, short_run_gaps, summarise_runs
 from .select.greedy import COMPOSITE_ID, achieved_counts, check_no_interval_reused, select
 from .select.objective import components
-from .validate.checks import check_model_extent, check_toe_above_collar, validate_inputs
+from .validate.checks import (
+    check_hole_direction,
+    check_model_extent,
+    hole_ends,
+    validate_inputs,
+)
 
 CACHE_DIRNAME = ".cache"
 
@@ -47,6 +52,8 @@ class PipelineState:
     dataset: Dataset | None = None
     traces: dict = field(default_factory=dict)
     intervals: pd.DataFrame | None = None
+    #: collar and toe per hole, for the orientation check and its section view
+    hole_ends: pd.DataFrame | None = None
     blocks: pd.DataFrame | None = None
     runs: pd.DataFrame | None = None
     candidates: pd.DataFrame | None = None
@@ -96,22 +103,12 @@ def stage_geometry(state: PipelineState) -> PipelineState:
     """Desurvey, build the interval framework, and attach block model attributes."""
     cfg, dataset = state.cfg, state.dataset
 
-    traces, issues = build_traces(
-        dataset.collar, dataset.survey, fill_collar_survey=cfg.desurvey.fill_collar_survey
-    )
-    state.report.extend(issues)
-    state.report.extend(check_toe_above_collar(traces, dataset.collar))
-
-    framework, issues = build_framework(dataset.assay, dataset.litho, dataset.domain_lookup)
-    state.report.extend(issues)
-    framework[M.IS_PLANNED] = False
-
-    planned = _planned_intervals(state, traces)
-    if planned is not None and not planned.empty:
-        framework = pd.concat([framework, planned], ignore_index=True)
-
-    framework, issues = desurvey_intervals(framework, traces)
-    state.report.extend(issues)
+    if dataset.samples is not None:
+        framework, traces = _supplied_geometry(state)
+    else:
+        framework, traces = _desurveyed_geometry(state)
+    state.hole_ends = hole_ends(framework, traces)
+    state.report.extend(check_hole_direction(state.hole_ends))
 
     blocks = label_blocks(dataset.block_model, cfg)
     framework, issues = assign_blocks(
@@ -141,13 +138,53 @@ def stage_geometry(state: PipelineState) -> PipelineState:
         default_core_diameter_mm=cfg.mass.default_core_diameter_mm,
         default_remaining_fraction=cfg.mass.default_remaining_fraction,
         loss_factor=cfg.mass.loss_factor,
-        default_density_t_m3=cfg.sources.assay.density.fallback_constant,
+        default_density_t_m3=cfg.sources.intervals.density.fallback_constant,
     )
 
     state.traces = traces
     state.intervals = framework
     state.blocks = blocks
     return state
+
+
+def _desurveyed_geometry(state: PipelineState) -> tuple[pd.DataFrame, dict]:
+    """Separate files: desurvey the holes, merge assay and litho, place every interval."""
+    cfg, dataset = state.cfg, state.dataset
+    traces, issues = build_traces(
+        dataset.collar, dataset.survey, fill_collar_survey=cfg.desurvey.fill_collar_survey
+    )
+    state.report.extend(issues)
+
+    framework, issues = build_framework(dataset.assay, dataset.litho, dataset.domain_lookup)
+    state.report.extend(issues)
+    framework[M.IS_PLANNED] = False
+
+    planned = _planned_intervals(state, traces)
+    if planned is not None and not planned.empty:
+        framework = pd.concat([framework, planned], ignore_index=True)
+
+    framework, issues = desurvey_intervals(framework, traces)
+    state.report.extend(issues)
+    return framework, traces
+
+
+def _supplied_geometry(state: PipelineState) -> tuple[pd.DataFrame, dict]:
+    """A desurveyed samples table: its coordinates are used as supplied.
+
+    Only planned holes are desurveyed here, since they cannot be in the table.
+    """
+    dataset = state.dataset
+    framework, issues = framework_from_samples(dataset.samples, dataset.domain_lookup)
+    state.report.extend(issues)
+    framework[M.IS_PLANNED] = False
+
+    traces: dict = {}
+    planned = _planned_intervals(state, traces)
+    if planned is not None and not planned.empty:
+        planned, issues = desurvey_intervals(planned, traces)
+        state.report.extend(issues)
+        framework = pd.concat([framework, planned], ignore_index=True)
+    return framework, traces
 
 
 def _planned_intervals(state: PipelineState, traces: dict) -> pd.DataFrame | None:
@@ -232,8 +269,19 @@ def _summarise(state: PipelineState) -> dict[str, Any]:
         "project": cfg.project.name,
         "config": str(cfg.config_path),
         "config_hash": cfg.config_hash,
-        "holes_in_collar": len(state.dataset.collar),
-        "holes_desurveyed": len(state.traces),
+    }
+    dataset = state.dataset
+    if dataset.samples is not None:
+        summary["geometry_source"] = "supplied by desurveyed samples table"
+        summary["holes_in_samples"] = int(dataset.samples[M.HOLE_ID].nunique())
+        summary["planned_holes_desurveyed"] = len(state.traces)
+    else:
+        summary["geometry_source"] = "desurveyed from collar and survey"
+        summary["holes_in_collar"] = len(dataset.collar)
+        summary["holes_desurveyed"] = len(state.traces)
+    if state.hole_ends is not None:
+        summary["holes_rising_with_depth"] = int(state.hole_ends[M.RISES].sum())
+    summary |= {
         "framework_intervals": len(state.intervals),
         "intervals_outside_model": int(state.intervals[M.OUTSIDE_MODEL].sum()),
         "runs": 0 if state.runs is None else len(state.runs),

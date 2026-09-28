@@ -16,8 +16,9 @@ from geomet_sampler.desurvey import build_traces
 from geomet_sampler.io.readers import Dataset, load_all
 from geomet_sampler.models import Severity
 from geomet_sampler.validate.checks import (
+    check_hole_direction,
     check_model_extent,
-    check_toe_above_collar,
+    hole_ends,
     report_frame,
     summarise,
     validate_inputs,
@@ -174,18 +175,39 @@ def test_a_logged_code_outside_the_lookup_is_an_error(dataset, cfg):
 # ---------------------------------------------------- convention sanity checks
 
 
-def test_an_inverted_dip_convention_is_caught_by_the_toe_check(dataset, cfg):
-    """Toe above collar is the signature of a positive-down file read as negative-down."""
+def _ends(dataset):
+    traces, _ = build_traces(dataset.collar, dataset.survey)
+    return hole_ends(pd.DataFrame(columns=[M.HOLE_ID]), traces)
+
+
+def test_an_inverted_dip_convention_warns_that_most_holes_rise(dataset, cfg):
+    """Every hole rising at once is the signature of a positive-down file read as
+    negative-down. It is a warning, not an error: the section view is the check."""
     dataset.survey[M.DIP] = dataset.survey[M.DIP].abs()
-    traces, _ = build_traces(dataset.collar, dataset.survey)
-    found = check_toe_above_collar(traces, dataset.collar)
-    assert found and found[0].severity is Severity.ERROR
-    assert "dip_convention" in found[0].message
+    found = {i.check: i for i in check_hole_direction(_ends(dataset))}
+    assert found["most_holes_rise"].severity is Severity.WARN
+    assert "dip_convention" in found["most_holes_rise"].message
+    assert "hole_orientation.png" in found["most_holes_rise"].message
+    assert found["hole_rises_with_depth"].severity is Severity.INFO
 
 
-def test_a_correctly_orientated_hole_passes_the_toe_check(dataset, cfg):
-    traces, _ = build_traces(dataset.collar, dataset.survey)
-    assert check_toe_above_collar(traces, dataset.collar) == []
+def test_correctly_orientated_holes_raise_nothing(dataset, cfg):
+    assert check_hole_direction(_ends(dataset)) == []
+
+
+def test_a_minority_of_upward_holes_is_listed_but_not_warned(dataset, cfg):
+    """Underground up-holes are legitimate; only the user knows which ones they are."""
+    hole = dataset.collar[M.HOLE_ID].iloc[0]
+    upward = dataset.survey[M.HOLE_ID] == hole
+    dataset.survey.loc[upward, M.DIP] = dataset.survey.loc[upward, M.DIP].abs()
+    found = check_hole_direction(_ends(dataset))
+    assert [(i.check, i.severity) for i in found] == [("hole_rises_with_depth", Severity.INFO)]
+    assert found[0].detail["holes"] == [hole]
+
+
+def test_exactly_half_rising_is_not_a_majority():
+    ends = pd.DataFrame({M.HOLE_ID: ["A", "B"], M.RISES: [True, False]})
+    assert [i.check for i in check_hole_direction(ends)] == ["hole_rises_with_depth"]
 
 
 def test_mostly_off_model_drilling_is_an_error_about_coordinates():

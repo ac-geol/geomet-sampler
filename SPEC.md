@@ -106,9 +106,9 @@ Column names fail loudly. Conventions fail silently, and are the larger risk.
 | `density_units` | `t_m3`, `g_cm3`, `lb_ft3` | Mass estimates wrong |
 | Element `units` | `pct`, `ppm`, `gpt`, `oz_t` | Drillhole vs block model comparison invalid |
 
-All are declared explicitly in config. There is no default that silently guesses. Validation
-includes a sanity check: after desurvey, any hole whose toe is above its collar RL is an
-ERROR, which catches an inverted dip convention immediately.
+All are declared explicitly in config. There is no default that silently guesses. After
+desurvey, holes ending above their collar are listed and a majority of them is a WARN,
+with a section view of every collar and toe for the user to confirm (section 5.1).
 
 ### 3.4 Required files
 
@@ -136,6 +136,31 @@ ERROR, which catches an inverted dip convention immediately.
   States: `AVAILABLE`, `UNAVAILABLE`, `PLANNED`. `remaining_fraction` is the fraction of
   original core still in the tray. Holes absent from this file default to `UNAVAILABLE`
   (fail closed). Column names here are also configurable.
+
+### 3.4a Alternative drillhole layout: one desurveyed samples table
+
+Many sites export drillhole data already desurveyed and merged, one row per interval.
+`sources.samples` accepts that table **in place of** collar, survey, assay and litho. A
+config supplies either all four separate files or `samples`, never a mixture; a mixture
+is a config error, because it would leave two sources for the same geometry or codes.
+
+Tier 1 fields for `samples`: `hole_id`, `from_m`, `to_m`, `logged_code`, and the
+coordinates `x_from, y_from, z_from, x_to, y_to, z_to, x_mid, y_mid, z_mid`. Everything
+an assay source takes (`sample_id`, `density`, `flags`, element fields, drillhole
+attributes, `carry_through`) is available with the same fallbacks.
+
+- Coordinates are used as supplied, converted with `conventions.length_units` at load.
+  No desurvey runs, so `dip_convention` is only required if planned holes are supplied.
+- Rows without assays (unsampled core) are kept with blank grades. A blank `sample_id`
+  is replaced by `{hole_id}_{from_m}` and reported as a WARN. The missing primary grade
+  breaks runs, so unsampled core never joins a composite.
+- Each row is one framework interval. Nothing is split, because a row cannot be divided
+  without inventing coordinates inside it. Runs still break wherever `logged_code`
+  changes, but a sample the source system assigned to one code while it physically
+  straddled a contact is invisible to the tool. This is reported as INFO
+  (`boundaries_inherited`).
+- A sample ID appearing on several rows (a sample split at a contact upstream) is kept
+  on each row, with distinct interval IDs, and reported as INFO.
 
 ### 3.5 Optional files
 
@@ -378,6 +403,9 @@ reporting:
 Enforced by pydantic models at load, before any data is read:
 
 - Every Tier 1 field mapped to a non-null column name
+- Drillhole sources are either all of collar, survey, assay and litho, or `samples`
+  alone (section 3.4a)
+- `dip_convention` is set whenever `survey` or `planned_survey` is supplied
 - Exactly one element flagged `primary: true`
 - `grade_bins.element` exists in `elements`
 - If `grade_bins.source: block_model`, that element has a non-null `block_model.field`
@@ -401,6 +429,9 @@ geomet-sampler init --collar data/collar.csv --survey data/survey.csv \
                     --assay data/assay.csv --litho data/litho.csv \
                     --block-model data/bm.csv --out config/project.yaml
 ```
+
+For a desurveyed table, `--samples data/desurveyed.csv` replaces the four drillhole
+options; the draft then has a `samples` source and no `dip_convention`.
 
 Inspects headers and data, fuzzy-matches likely mappings, and writes a draft config with
 `# CONFIRM` comments on every guess. Guessing rules:
@@ -438,11 +469,36 @@ Checks, each producing a structured issue record (severity: ERROR / WARN / INFO)
 - Every value in the litho `logged_code` field resolves in the domain lookup (unmapped
   codes are an ERROR, since silently dropping them distorts allocation)
 - Every value in the availability field resolves through `value_map`
-- **Convention sanity check**: after desurvey, any hole whose toe RL exceeds its collar RL
-  is an ERROR. This catches an inverted `dip_convention` before it propagates.
+- **Hole orientation check**: see below. Listed as INFO per hole, WARN above 50% of holes.
 - **Extent sanity check**: fraction of desurveyed intervals falling outside the block model
   extents. Above a threshold (default 50%) this is an ERROR, since it usually means a
   coordinate system or unit mismatch rather than genuine off-model drilling.
+
+**Hole orientation check.** Holes drilled upward from underground are legitimate, and
+only the user knows which ones they are, so direction is never an ERROR. After geometry is
+built, every hole whose toe ends above its collar is listed as INFO, and if more than 50%
+of holes do, that is a WARN: most holes rising is what an inverted `dip_convention` or an
+inverted Z looks like. Every run that builds geometry also writes
+`plots/hole_orientation.png` (plan and two sections of each hole's collar and toe, upward
+holes in red, no vertical exaggeration) regardless of `include_plots`, and the CLI ends
+with a highlighted reminder to check it. **Getting orientation right is critical**: a hole
+loaded upside down or in the wrong place corrupts every result after it, and the section
+view is the user's check on that.
+
+With a desurveyed samples table (section 3.4a) the collar, orphan, total-depth and survey
+checks cannot apply; an INFO issue (`geometry_supplied`) records that
+they did not run. The interval, density, domain lookup, block model and extent checks run
+as normal, as does the hole orientation check (collar and toe taken from the top of the
+shallowest row and the bottom of the deepest). These supplied-geometry checks are added:
+
+| Check | Severity | Catches |
+|---|---|---|
+| Blank or non-numeric coordinate | WARN | rows that cannot be placed in the block model |
+| 3D distance from-to vs `to_m - from_m`, ratio near 3.281 or 0.305 | ERROR | depths and coordinates in different length units |
+| Same comparison, any other difference over 5% (floor 0.05 m) | WARN | coordinates belonging to a different interval |
+| Midpoint more than 5% (floor 0.05 m) from halfway between from and to | WARN | wrong columns mapped to the midpoint |
+| Consecutive touching rows whose points do not meet (over 0.05 m) | WARN | rows attached to the wrong hole, mixed desurveys |
+| Hole both rises and falls with depth | WARN | mixed-up rows or a partly inverted Z |
 
 **Fail on ERROR by default**, with `--force` to continue. Write `validation_report.csv`.
 
@@ -490,6 +546,9 @@ Build a single interval table on a common framework.
 4. Carry grades and density from the parent assay interval (no re-averaging needed,
    grade is constant within the parent)
 5. Record `parent_sample_id` so the physical sample is always traceable
+
+With a desurveyed samples table the table's rows are the framework directly, with steps
+2 to 4 already done upstream (section 3.4a).
 
 For `PLANNED` holes there are no assays. Instead, discretise the planned trace at a fixed
 interval (default 1.0 m) and populate attributes entirely from the block model.

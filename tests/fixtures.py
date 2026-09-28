@@ -386,3 +386,92 @@ reporting:
   formats: [csv]
   include_plots: false
 """
+
+
+#: Column names for the desurveyed samples table, keyed by canonical field. Arbitrary on
+#: purpose, so the equivalence test also proves no name leaks into the library.
+SAMPLES_COLUMNS = {
+    "hole_id": "S_HOLE",
+    "sample_id": "S_LABNO",
+    "from_m": "S_FROM",
+    "to_m": "S_TO",
+    "logged_code": "S_LITH",
+    "x_from": "S_XF",
+    "y_from": "S_YF",
+    "z_from": "S_ZF",
+    "x_to": "S_XT",
+    "y_to": "S_YT",
+    "z_to": "S_ZT",
+    "x_mid": "S_XM",
+    "y_mid": "S_YM",
+    "z_mid": "S_ZM",
+}
+SAMPLES_EXTRA = {"elem_Zn": "S_ZN", "density": "S_SG", "low_recovery": "S_LOWREC"}
+
+
+def write_samples_project(root: Path, source: Path, *, feet: bool = False) -> Path:
+    """Rewrite the fixture as one desurveyed samples table plus the non-drillhole files.
+
+    The table is the merged, desurveyed framework the separate-file pipeline builds, so
+    both layouts describe identical intervals and must produce identical selections.
+    With ``feet`` every length and coordinate is quoted in feet as well.
+    """
+    import shutil
+
+    import pandas as pd
+    import yaml
+
+    from geomet_sampler.config import load_config
+    from geomet_sampler.pipeline import run_pipeline
+
+    state = run_pipeline(load_config(source / "project.yaml"), through="geometry")
+    framework = state.intervals
+
+    data = root / "data"
+    data.mkdir(parents=True, exist_ok=True)
+    scale = FEET_PER_METRE if feet else 1.0
+    table = pd.DataFrame()
+    for canonical, column in SAMPLES_COLUMNS.items():
+        if canonical == "sample_id":
+            table[column] = framework["parent_sample_id"]
+        elif canonical in ("hole_id", "logged_code"):
+            table[column] = framework[canonical].fillna("")
+        else:
+            table[column] = (framework[canonical] * scale).map(lambda v: f"{v:.10f}")
+    table[SAMPLES_EXTRA["elem_Zn"]] = (framework["elem_Zn"] / 10_000.0).map(lambda v: f"{v:.10f}")
+    table[SAMPLES_EXTRA["density"]] = framework["density"].map(lambda v: f"{v:.4f}")
+    table[SAMPLES_EXTRA["low_recovery"]] = framework["low_recovery"].map({True: "Y", False: "N"})
+    table.to_csv(data / "samples.csv", index=False)
+
+    for name in ("domain_lookup.csv", "availability.csv", "block_model.csv"):
+        shutil.copy(source / "data" / name, data / name)
+    if feet:
+        blocks = pd.read_csv(data / "block_model.csv", dtype=str)
+        for token in ("b_x", "b_y", "b_z", "b_dx", "b_dy", "b_dz"):
+            column = ORIGINAL[token]
+            blocks[column] = (pd.to_numeric(blocks[column]) * FEET_PER_METRE).map(
+                lambda v: f"{v:.10f}"
+            )
+        blocks.to_csv(data / "block_model.csv", index=False)
+
+    raw = yaml.safe_load(config_text(6, ORIGINAL))
+    raw["conventions"]["length_units"] = "ft" if feet else "m"
+    del raw["conventions"]["dip_convention"]
+    for name in ("collar", "survey", "assay", "litho"):
+        del raw["sources"][name]
+    raw["sources"]["samples"] = {
+        "path": "data/samples.csv",
+        "columns": dict(SAMPLES_COLUMNS),
+        "density": {"source": SAMPLES_EXTRA["density"], "fallback_constant": 2.70},
+        "flags": {
+            "low_recovery": {
+                "source": SAMPLES_EXTRA["low_recovery"],
+                "type": "boolean",
+                "true_values": ["Y"],
+            }
+        },
+    }
+    raw["elements"]["Zn"]["drillhole"]["field"] = SAMPLES_EXTRA["elem_Zn"]
+    config = root / "project.yaml"
+    config.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    return config

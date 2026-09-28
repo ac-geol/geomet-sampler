@@ -41,6 +41,21 @@ SYNONYMS: dict[str, tuple[str, ...]] = {
     "dy": ("dy", "yinc", "ysize", "blocky"),
     "dz": ("dz", "zinc", "zsize", "blockz"),
     "period": ("period", "mineperiod", "schedule", "stage", "year", "phase"),
+    # desurveyed samples table: coordinates at the from, to and mid points of each row
+    **{
+        f"{axis}_{where}": tuple(f"{a}{w}" for a in names for w in words)
+        + tuple(f"{w}{a}" for a in names for w in words)
+        for axis, names in (
+            ("x", ("x", "east", "easting")),
+            ("y", ("y", "north", "northing")),
+            ("z", ("z", "rl", "elev", "elevation")),
+        )
+        for where, words in (
+            ("from", ("from", "start", "top")),
+            ("to", ("to", "end", "bottom")),
+            ("mid", ("mid", "midpoint", "centre", "center", "m")),
+        )
+    },
 }
 
 #: Suffixes that mark a numeric column as a grade, mapped to their declared units.
@@ -173,6 +188,22 @@ def build_draft(
         "survey": ("hole_id", "depth", "dip", "azimuth"),
         "assay": ("hole_id", "from_m", "to_m", "sample_id"),
         "litho": ("hole_id", "from_m", "to_m", "logged_code"),
+        "samples": (
+            "hole_id",
+            "from_m",
+            "to_m",
+            "sample_id",
+            "logged_code",
+            "x_from",
+            "y_from",
+            "z_from",
+            "x_to",
+            "y_to",
+            "z_to",
+            "x_mid",
+            "y_mid",
+            "z_mid",
+        ),
         "block_model": ("x", "y", "z", "dx", "dy", "dz", "period"),
     }
     inferences = [
@@ -183,14 +214,27 @@ def build_draft(
     by_label = {i.label: i for i in inferences}
     notes: list[str] = []
 
-    dip_convention, dip_reason = (
-        guess_dip_convention(paths["survey"])
-        if "survey" in paths
-        else ("negative_down", "no survey file")
-    )
-    notes.append(f"dip_convention guessed as {dip_convention}: {dip_reason}")
+    if "samples" in paths:
+        dip_convention = None
+        notes.append(
+            "desurveyed samples table supplied: collar, survey, assay and litho are left "
+            "out, and dip_convention is not needed unless planned holes are added"
+        )
+        separate = sorted({"collar", "survey", "assay", "litho"} & set(paths))
+        if separate:
+            notes.append(
+                f"ignored {', '.join(separate)}: a samples table replaces them, and the "
+                "pipeline refuses a config that mixes the two"
+            )
+    else:
+        dip_convention, dip_reason = (
+            guess_dip_convention(paths["survey"])
+            if "survey" in paths
+            else ("negative_down", "no survey file")
+        )
+        notes.append(f"dip_convention guessed as {dip_convention}: {dip_reason}")
 
-    assay = by_label.get("assay")
+    assay = by_label.get("samples") or by_label.get("assay")
     elements = dict(assay.elements) if assay else {}
     primary = next(iter(elements), None)
     if primary:
@@ -201,7 +245,7 @@ def build_draft(
     block = by_label.get("block_model")
     attributes = dict(block.attributes) if block else {}
     for inference in inferences:
-        if inference.label in {"assay", "litho"}:
+        if inference.label in {"assay", "litho", "samples"}:
             for role, column in inference.attributes.items():
                 attributes.setdefault(role, None)
                 notes.append(f"{inference.label} column {column!r} may be an attribute role")
@@ -235,7 +279,7 @@ def _render(
     attributes: dict[str, str | None],
     elements: dict[str, str],
     primary: str | None,
-    dip_convention: str,
+    dip_convention: str | None,
     project_name: str,
 ) -> str:
     def path_of(label: str) -> str:
@@ -265,8 +309,52 @@ def _render(
     ] or ["  # REQUIRED: declare at least one attribute role used by allocation_key"]
 
     allocation_key = [r for r in list(attributes)[:2]] or ["ROLE_REQUIRED"]
-    density = by_label.get("assay").density if "assay" in by_label else None
+    interval_label = "samples" if "samples" in paths else "assay"
+    density = by_label[interval_label].density if interval_label in by_label else None
     block_density = by_label.get("block_model").density if "block_model" in by_label else None
+
+    dip_line = (
+        f"  dip_convention: {dip_convention}{CONFIRM}\n"
+        if dip_convention is not None
+        else "  # dip_convention: add negative_down or positive_down if planned holes are added\n"
+    )
+    flags = f"""    density:
+      source: {density or "null"}{CONFIRM}
+      fallback_constant: 2.70{CONFIRM}
+    flags:
+      low_recovery:
+        source: null{CONFIRM} <- map a recovery column if you have one
+        type: boolean
+        true_values: [Y, "1"]
+"""
+    if "samples" in paths:
+        drillhole_sources = f"""  # One desurveyed table replaces collar, survey, assay and litho.
+  # Coordinates are used as supplied, converted with conventions.length_units.
+  samples:
+    path: {path_of("samples")}
+    encoding: auto
+    columns:
+{_mapping_lines(by_label.get("samples"))}{flags}
+"""
+    else:
+        drillhole_sources = f"""  collar:
+    path: {path_of("collar")}
+    encoding: auto
+    columns:
+{_mapping_lines(by_label.get("collar"))}
+  survey:
+    path: {path_of("survey")}
+    columns:
+{_mapping_lines(by_label.get("survey"))}
+  assay:
+    path: {path_of("assay")}
+    columns:
+{_mapping_lines(by_label.get("assay"))}{flags}
+  litho:
+    path: {path_of("litho")}
+    columns:
+{_mapping_lines(by_label.get("litho"))}
+"""
 
     return f"""# Draft config generated by `geomet-sampler init`.
 #
@@ -287,39 +375,13 @@ project:
 
 conventions:
   length_units: m{CONFIRM}
-  dip_convention: {dip_convention}{CONFIRM}
-  azimuth_reference: grid{CONFIRM}
+{dip_line}  azimuth_reference: grid{CONFIRM}
   magnetic_declination_deg: 0.0
   density_units: t_m3{CONFIRM}
 
 sources:
 
-  collar:
-    path: {path_of("collar")}
-    encoding: auto
-    columns:
-{_mapping_lines(by_label.get("collar"))}
-  survey:
-    path: {path_of("survey")}
-    columns:
-{_mapping_lines(by_label.get("survey"))}
-  assay:
-    path: {path_of("assay")}
-    columns:
-{_mapping_lines(by_label.get("assay"))}    density:
-      source: {density or "null"}{CONFIRM}
-      fallback_constant: 2.70{CONFIRM}
-    flags:
-      low_recovery:
-        source: null{CONFIRM} <- map a recovery column if you have one
-        type: boolean
-        true_values: [Y, "1"]
-
-  litho:
-    path: {path_of("litho")}
-    columns:
-{_mapping_lines(by_label.get("litho"))}
-  domain_lookup:
+{drillhole_sources}  domain_lookup:
     path: PATH_REQUIRED  # a two-column CSV: logged_code, geomet_domain
     columns:
       logged_code: logged_code
