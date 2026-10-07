@@ -14,10 +14,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from .io.readers import _read_text, _to_num
+from .io.numbers import NumberRules, parse_grades, parse_numbers
+from .io.readers import _read_text
 from .units import DENSITY_RANGE_T_M3
 
 CONFIRM = "  # CONFIRM"
+
+#: Declarations about text in numeric columns, for every source that carries grades.
+#: Left empty and false: the first validate run lists any tokens that need declaring.
+NUMERIC_LINES = f"""    null_values: []{CONFIRM} <- text meaning "no value", e.g. [NS, IS, -99]
+    negative_is_below_detection: false{CONFIRM} <- true if -0.01 means <0.01
+"""
 
 #: Name synonyms for the structural fields, checked after lowercasing and stripping
 #: separators, so `Hole_ID`, `holeid` and `BHID` all resolve.
@@ -116,7 +123,9 @@ def inspect_file(label: str, path: Path, wanted: tuple[str, ...]) -> Inference:
     for column in columns:
         if column in taken:
             continue
-        values = _to_num(frame, column)
+        # parsed as a grade so below-detection text still counts as numeric; the issues
+        # are for the pipeline, which reports them against the reviewed config
+        values, _ = parse_grades(frame[column], column, NumberRules("init", path.name))
         numeric_fraction = float(values.notna().mean())
         if numeric_fraction > 0.8:
             element, units = _element_from_name(column)
@@ -170,7 +179,8 @@ def guess_dip_convention(survey_path: Path) -> tuple[str, str]:
     column = match_column("dip", list(frame.columns))
     if column is None:
         return "negative_down", "no dip column found"
-    values = _to_num(frame, column).dropna()
+    values = parse_numbers(frame[column], column, NumberRules("init", survey_path.name))[0]
+    values = values.dropna()
     if values.empty:
         return "negative_down", "dip column is empty"
     negative = float((values < 0).mean())
@@ -318,7 +328,7 @@ def _render(
         if dip_convention is not None
         else "  # dip_convention: add negative_down or positive_down if planned holes are added\n"
     )
-    flags = f"""    density:
+    flags = f"""{NUMERIC_LINES}    density:
       source: {density or "null"}{CONFIRM}
       fallback_constant: 2.70{CONFIRM}
     flags:
@@ -390,7 +400,7 @@ sources:
   block_model:
     path: {path_of("block_model")}
     columns:
-{_mapping_lines(by_label.get("block_model"))}    density:
+{_mapping_lines(by_label.get("block_model"))}{NUMERIC_LINES}    density:
       source: {block_density or "null"}{CONFIRM}
       fallback_constant: 2.70{CONFIRM}
 

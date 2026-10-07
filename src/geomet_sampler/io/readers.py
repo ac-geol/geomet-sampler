@@ -4,8 +4,9 @@ This module is the boundary. Above it, user column names, units and conventions.
 Below it, only canonical names in normalised units. If a user column name appears
 anywhere else in the library, it is a bug.
 
-Everything is read as text first, then coerced explicitly. Fully quoted files, BOMs and
-CRLF line endings are absorbed here rather than fixed by hand in the source data.
+Everything is read as text first, then parsed explicitly by :mod:`.numbers`, which
+reports every value that is not a plain number. Fully quoted files, BOMs and CRLF line
+endings are absorbed here rather than fixed by hand in the source data.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from .. import models as M
-from ..config import AssaySource, Config, GradeUnits, SourceBase
+from ..config import AssaySource, BlockModelSource, Config, GradeUnits, SourceBase
 from ..errors import MappingError
 from ..models import Availability, Issue, Severity
 from ..units import (
@@ -27,6 +28,7 @@ from ..units import (
     grade_to_ppm,
     length_to_metres,
 )
+from .numbers import NumberRules, parse_grades, parse_numbers
 
 ENCODING_CANDIDATES = ("utf-8-sig", "utf-8", "cp1252")
 
@@ -77,10 +79,33 @@ def _read_text(path: Path, encoding: str) -> pd.DataFrame:
     raise last if last else RuntimeError(f"could not read {path}")
 
 
-def _to_num(df: pd.DataFrame, col: str) -> pd.Series:
-    """Coerce a text column to float. Blanks and unparseable values become NaN."""
-    s = df[col].astype(str).str.strip().replace({"": None, "-": None, "NA": None, "na": None})
-    return pd.to_numeric(s, errors="coerce")
+def _rules(src: SourceBase, source_name: str) -> NumberRules:
+    return NumberRules(
+        source=source_name,
+        file=src.path.name,
+        null_values=tuple(src.null_values),
+        negative_is_below_detection=getattr(src, "negative_is_below_detection", False),
+    )
+
+
+def _num(
+    df: pd.DataFrame, col: str, src: SourceBase, rules: NumberRules, issues: list[Issue]
+) -> pd.Series:
+    """Parse one numeric column, adding what was found to ``issues``.
+
+    ``col`` is a canonical name in a renamed frame, or a user column; messages always
+    name the user's column.
+    """
+    values, found = parse_numbers(df[col], src.user_column(col) or col, rules)
+    issues.extend(found)
+    return values
+
+
+def _grade(df: pd.DataFrame, col: str, rules: NumberRules, issues: list[Issue]) -> pd.Series:
+    """Parse one grade column (a user column), adding what was found to ``issues``."""
+    values, found = parse_grades(df[col], col, rules)
+    issues.extend(found)
+    return values
 
 
 def _clean_id(s: pd.Series) -> pd.Series:
@@ -132,19 +157,21 @@ def read_collar(
     cfg: Config, src=None, *, planned: bool = False
 ) -> tuple[pd.DataFrame, list[Issue]]:
     src = src or cfg.sources.collar
+    name = "planned_collar" if planned else "collar"
     raw = _read_text(src.path, src.encoding)
-    _raise_if(_check_mapping(raw, src, "sources.planned_collar" if planned else "sources.collar"))
+    _raise_if(_check_mapping(raw, src, f"sources.{name}"))
     df = _rename(raw, src)
+    rules = _rules(src, name)
+    issues: list[Issue] = []
+    conv = cfg.conventions
     out = pd.DataFrame({M.HOLE_ID: _clean_id(df[M.HOLE_ID])})
     for col in (M.EAST, M.NORTH, M.RL):
-        out[col] = _to_num(df, col)
-    conv = cfg.conventions
-    for col in (M.EAST, M.NORTH, M.RL):
-        out[col] = length_to_metres(out[col], conv.length_units)
+        out[col] = length_to_metres(_num(df, col, src, rules, issues), conv.length_units)
 
-    issues: list[Issue] = []
     if M.TOTAL_DEPTH in df.columns:
-        out[M.TOTAL_DEPTH] = length_to_metres(_to_num(df, M.TOTAL_DEPTH), conv.length_units)
+        out[M.TOTAL_DEPTH] = length_to_metres(
+            _num(df, M.TOTAL_DEPTH, src, rules, issues), conv.length_units
+        )
     else:
         out[M.TOTAL_DEPTH] = np.nan
         issues.append(
@@ -165,15 +192,18 @@ def read_survey(
     cfg: Config, src=None, *, planned: bool = False
 ) -> tuple[pd.DataFrame, list[Issue]]:
     src = src or cfg.sources.survey
+    name = "planned_survey" if planned else "survey"
     raw = _read_text(src.path, src.encoding)
-    _raise_if(_check_mapping(raw, src, "sources.planned_survey" if planned else "sources.survey"))
+    _raise_if(_check_mapping(raw, src, f"sources.{name}"))
     df = _rename(raw, src)
+    rules = _rules(src, name)
+    issues: list[Issue] = []
     conv = cfg.conventions
     out = pd.DataFrame({M.HOLE_ID: _clean_id(df[M.HOLE_ID])})
-    out[M.DEPTH] = length_to_metres(_to_num(df, M.DEPTH), conv.length_units)
-    out[M.DIP] = dip_to_negative_down(_to_num(df, M.DIP), conv)
-    out[M.AZIMUTH] = azimuth_to_grid(_to_num(df, M.AZIMUTH), conv)
-    return out.sort_values([M.HOLE_ID, M.DEPTH]).reset_index(drop=True), []
+    out[M.DEPTH] = length_to_metres(_num(df, M.DEPTH, src, rules, issues), conv.length_units)
+    out[M.DIP] = dip_to_negative_down(_num(df, M.DIP, src, rules, issues), conv)
+    out[M.AZIMUTH] = azimuth_to_grid(_num(df, M.AZIMUTH, src, rules, issues), conv)
+    return out.sort_values([M.HOLE_ID, M.DEPTH]).reset_index(drop=True), issues
 
 
 def read_assay(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
@@ -204,10 +234,11 @@ def read_samples(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
 
     out, issues = _interval_fields(raw, src, "samples", cfg)
     df = _rename(raw, src)
+    rules = _rules(src, "samples")
     code = df[M.LOGGED_CODE].astype(str).str.strip()
     out[M.LOGGED_CODE] = code.where(code != "", None)
     for col in (*M.FROM_XYZ, *M.TO_XYZ, *M.MID_XYZ):
-        out[col] = length_to_metres(_to_num(df, col), cfg.conventions.length_units)
+        out[col] = length_to_metres(_num(df, col, src, rules, issues), cfg.conventions.length_units)
     return out.sort_values([M.HOLE_ID, M.FROM_M]).reset_index(drop=True), issues
 
 
@@ -240,11 +271,12 @@ def _interval_fields(
     """Depths, sample ID, density, flags, grades and attributes, in canonical form."""
     df = _rename(raw, src)
     conv = cfg.conventions
+    rules = _rules(src, source_name)
     issues: list[Issue] = []
 
     out = pd.DataFrame({M.HOLE_ID: _clean_id(df[M.HOLE_ID])})
-    out[M.FROM_M] = length_to_metres(_to_num(df, M.FROM_M), conv.length_units)
-    out[M.TO_M] = length_to_metres(_to_num(df, M.TO_M), conv.length_units)
+    for col in (M.FROM_M, M.TO_M):
+        out[col] = length_to_metres(_num(df, col, src, rules, issues), conv.length_units)
 
     generated = (
         out[M.HOLE_ID] + "_" + out[M.FROM_M].map(lambda v: f"{v:.2f}" if pd.notna(v) else "NA")
@@ -277,12 +309,12 @@ def _interval_fields(
             )
         )
 
-    out[M.DENSITY], dens_issues = _density_column(df, src.density, conv, source_name)
+    out[M.DENSITY], dens_issues = _density_column(df, src, conv, rules)
     issues += dens_issues
 
     flag = src.flags.get(M.LOW_RECOVERY)
     if flag is not None and flag.source is not None:
-        out[M.LOW_RECOVERY] = _resolve_flag(df, flag)
+        out[M.LOW_RECOVERY] = _resolve_flag(df, flag, src, rules, issues)
     else:
         out[M.LOW_RECOVERY] = False
         issues.append(
@@ -296,7 +328,7 @@ def _interval_fields(
 
     for name, spec in cfg.elements.items():
         if spec.drillhole.field is not None:
-            values = _to_num(df, spec.drillhole.field)
+            values = _grade(df, spec.drillhole.field, rules, issues)
             out[M.elem_col(name)] = grade_to_ppm(values, spec.drillhole.units)
 
     for role, spec in cfg.attributes.items():
@@ -321,15 +353,17 @@ def read_litho(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
 
     df = _rename(raw, src)
     conv = cfg.conventions
+    rules = _rules(src, "litho")
+    issues: list[Issue] = []
     out = pd.DataFrame({M.HOLE_ID: _clean_id(df[M.HOLE_ID])})
-    out[M.FROM_M] = length_to_metres(_to_num(df, M.FROM_M), conv.length_units)
-    out[M.TO_M] = length_to_metres(_to_num(df, M.TO_M), conv.length_units)
+    for col in (M.FROM_M, M.TO_M):
+        out[col] = length_to_metres(_num(df, col, src, rules, issues), conv.length_units)
     out[M.LOGGED_CODE] = df[M.LOGGED_CODE].astype(str).str.strip()
     for role, user_col in litho_attrs.items():
         out[M.dh_attr_col(role)] = raw[user_col].astype(str).str.strip()
     for extra in src.carry_through:
         out[extra] = raw[extra]
-    return out.sort_values([M.HOLE_ID, M.FROM_M]).reset_index(drop=True), []
+    return out.sort_values([M.HOLE_ID, M.FROM_M]).reset_index(drop=True), issues
 
 
 def read_domain_lookup(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
@@ -381,11 +415,14 @@ def read_block_model(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
 
     df = _rename(raw, src)
     conv = cfg.conventions
+    rules = _rules(src, "block_model")
+    issues: list[Issue] = []
     out = pd.DataFrame(index=df.index)
     for col in (M.BLOCK_X, M.BLOCK_Y, M.BLOCK_Z, M.BLOCK_DX, M.BLOCK_DY, M.BLOCK_DZ):
-        out[col] = length_to_metres(_to_num(df, col), conv.length_units)
+        out[col] = length_to_metres(_num(df, col, src, rules, issues), conv.length_units)
     out[M.PERIOD] = df[M.PERIOD].astype(str).str.strip().replace({"": None, "nan": None})
-    out[M.DENSITY], issues = _density_column(df, src.density, conv, "block_model")
+    out[M.DENSITY], dens_issues = _density_column(df, src, conv, rules)
+    issues += dens_issues
 
     for role, spec in cfg.attributes.items():
         if spec.block_model is not None:
@@ -393,7 +430,7 @@ def read_block_model(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
     for name, spec in cfg.elements.items():
         if spec.block_model.field is not None:
             out[M.bm_elem_col(name)] = grade_to_ppm(
-                _to_num(raw, spec.block_model.field), spec.block_model.units
+                _grade(raw, spec.block_model.field, rules, issues), spec.block_model.units
             )
     out[M.BLOCK_TONNES] = out[M.BLOCK_DX] * out[M.BLOCK_DY] * out[M.BLOCK_DZ] * out[M.DENSITY]
     return out.reset_index(drop=True), issues
@@ -428,18 +465,15 @@ def read_availability(cfg: Config) -> tuple[pd.DataFrame, list[Issue]]:
             )
         )
 
+    rules = _rules(src, "availability")
     out = pd.DataFrame({M.HOLE_ID: _clean_id(df[M.HOLE_ID])})
     out[M.AVAILABILITY] = mapped.fillna(Availability.UNAVAILABLE.value)
-    out[M.CORE_DIAMETER_MM] = (
-        _to_num(df, M.CORE_DIAMETER_MM)
-        if M.CORE_DIAMETER_MM in df.columns
-        else pd.Series(np.nan, index=df.index)
-    )
-    out[M.REMAINING_FRACTION] = (
-        _to_num(df, M.REMAINING_FRACTION)
-        if M.REMAINING_FRACTION in df.columns
-        else pd.Series(np.nan, index=df.index)
-    )
+    for col in (M.CORE_DIAMETER_MM, M.REMAINING_FRACTION):
+        out[col] = (
+            _num(df, col, src, rules, issues)
+            if col in df.columns
+            else pd.Series(np.nan, index=df.index)
+        )
     out[M.CORE_DIAMETER_MM] = out[M.CORE_DIAMETER_MM].fillna(cfg.mass.default_core_diameter_mm)
     out[M.REMAINING_FRACTION] = out[M.REMAINING_FRACTION].fillna(
         cfg.mass.default_remaining_fraction
@@ -455,10 +489,12 @@ def read_existing_testwork(cfg: Config) -> tuple[pd.DataFrame | None, list[Issue
     _raise_if(_check_mapping(raw, src, "sources.existing_testwork"))
     df = _rename(raw, src)
     conv = cfg.conventions
+    rules = _rules(src, "existing_testwork")
+    issues: list[Issue] = []
     out = pd.DataFrame({M.HOLE_ID: _clean_id(df[M.HOLE_ID])})
     for col in (M.FROM_M, M.TO_M):
         out[col] = (
-            length_to_metres(_to_num(df, col), conv.length_units)
+            length_to_metres(_num(df, col, src, rules, issues), conv.length_units)
             if col in df.columns
             else pd.Series(np.nan, index=df.index)
         )
@@ -471,18 +507,19 @@ def read_existing_testwork(cfg: Config) -> tuple[pd.DataFrame | None, list[Issue
     out["test_package"] = (
         df["test_package"].astype(str).str.strip() if "test_package" in df.columns else ""
     )
-    return out, []
+    return out, issues
 
 
 # ---------------------------------------------------------------- shared parts
 
 
 def _density_column(
-    df: pd.DataFrame, spec, conv, source_name: str
+    df: pd.DataFrame, src: AssaySource | BlockModelSource, conv, rules: NumberRules
 ) -> tuple[pd.Series, list[Issue]]:
+    spec, source_name = src.density, rules.source
     issues: list[Issue] = []
     if spec.source is not None:
-        values = density_to_t_m3(_to_num(df, spec.source), conv.density_units)
+        values = density_to_t_m3(_num(df, spec.source, src, rules, issues), conv.density_units)
         if spec.fallback_constant is not None and values.isna().any():
             n = int(values.isna().sum())
             values = values.fillna(spec.fallback_constant)
@@ -509,12 +546,14 @@ def _density_column(
     return values, issues
 
 
-def _resolve_flag(df: pd.DataFrame, spec) -> pd.Series:
+def _resolve_flag(
+    df: pd.DataFrame, spec, src: SourceBase, rules: NumberRules, issues: list[Issue]
+) -> pd.Series:
     raw = df[spec.source]
     if spec.type == "boolean":
         truthy = {str(v).strip().upper() for v in spec.true_values}
         return raw.astype(str).str.strip().str.upper().isin(truthy)
-    values = pd.to_numeric(raw.astype(str).str.strip(), errors="coerce")
+    values = _num(df, spec.source, src, rules, issues)
     if spec.direction == "below":
         return values < spec.threshold
     return values > spec.threshold

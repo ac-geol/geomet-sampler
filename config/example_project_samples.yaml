@@ -48,6 +48,10 @@ sources:
       x_mid: X_Mid
       y_mid: Y_Mid
       z_mid: Z_Mid
+    null_values: []               # text meaning "no value", e.g. [NS, IS, -99]. Only an
+                                  # empty cell is blank otherwise; other text is an ERROR
+    negative_is_below_detection: false  # true if -0.01 means <0.01; else negative grades
+                                        # are an ERROR. <0.01 always reads as half the limit
     density:
       source: BD_tonnes_m3
       fallback_constant: 2.70
@@ -73,6 +77,10 @@ sources:
       dy: DY
       dz: DZ
       period: PERIOD
+    null_values: []               # text meaning "no value", e.g. [NS, IS, -99]. Only an
+                                  # empty cell is blank otherwise; other text is an ERROR
+    negative_is_below_detection: false  # true if -0.01 means <0.01; else negative grades
+                                        # are an ERROR. <0.01 always reads as half the limit
     density:
       source: DENSITY
       fallback_constant: 2.70

@@ -166,6 +166,13 @@ exist specifically to catch a wrong one:
 - if most intervals fall outside the block model extents, that is an ERROR about
   coordinate systems and units rather than a note about off-model drilling.
 
+Values get the same treatment as conventions. Only an empty cell is read as blank;
+any other text in a numeric column (`NS`, `-`, `n/a`) is an ERROR until it is listed in
+that source's `null_values`. In grade columns, `<0.01` reads as half the limit, and a
+negative grade is an ERROR until you declare whether negatives are sentinels (list
+`-99` in `null_values`) or detection limits (`negative_is_below_detection: true`). See
+`docs/SPEC.md` section 3.3a.
+
 ## Development
 
 ```bash

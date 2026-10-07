@@ -110,6 +110,34 @@ All are declared explicitly in config. There is no default that silently guesses
 desurvey, holes ending above their collar are listed and a majority of them is a WARN,
 with a section view of every collar and toe for the user to confirm (section 5.1).
 
+### 3.3a Text in numeric columns
+
+Files are read as text and parsed in one place (`io/numbers.py`), so a value that is not
+a plain number never becomes blank, or a grade, without the report saying so.
+
+| Text | Read as | Report |
+|---|---|---|
+| Empty cell | blank | none; later checks report blanks where they matter |
+| A token in the source's `null_values` (e.g. `NS`, `IS`, `-99`) | blank | INFO `null_value`, with counts per token |
+| `<x` in a grade column | half of `x` | INFO `below_detection` |
+| A negative grade, with `negative_is_below_detection: true` | half of its absolute value | INFO `below_detection`, listing the values |
+| A negative grade otherwise | blank | ERROR `grade_negative` |
+| Anything else that will not parse | blank | ERROR `value_unparseable` |
+
+- `null_values` is declared per source and applies to every numeric column in it. Text
+  tokens match ignoring case; a token that is a number matches by value, so `-99` also
+  matches `-99.00`.
+- Only an empty cell is blank without being declared. `-`, `NA` and `n/a` must be listed.
+- Negative grades are an ERROR by default because databases use them both for detection
+  limits (`-0.01` meaning `<0.01`) and for sentinels (`-99`), and the two cannot be told
+  apart from the values. `negative_is_below_detection` is available on `assay`,
+  `samples` and `block_model`.
+- Errors name the user's column, the file, the distinct values with counts, and the
+  file lines. A value that raises an ERROR loads as blank, so a run forced past the
+  errors never averages a sentinel into a composite.
+- Reading `<x` as `x/2` is the decided convention (2026-10-06), not a placeholder.
+  Over-limit values (`>x`) are not interpreted and are an ERROR.
+
 ### 3.4 Required files
 
 - **Collar**, **Survey**, **Assay/interval**, **Lithology** (section 3.1 canonical fields)
@@ -464,6 +492,7 @@ guessed value is marked, and `init` prints a summary of what it inferred.
 Checks, each producing a structured issue record (severity: ERROR / WARN / INFO):
 
 - Required columns present after mapping
+- Every numeric value parses, or is declared (section 3.3a)
 - Collar hole IDs unique
 - Every assay/litho/survey hole ID exists in collar (orphan check)
 - `from < to` on all intervals

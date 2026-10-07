@@ -115,6 +115,14 @@ class SourceBase(Strict):
     encoding: str = "auto"
     columns: dict[str, str | None] = Field(default_factory=dict)
     carry_through: list[str] = Field(default_factory=list)
+    #: Text that means "no value" in this file's numeric columns, e.g. ``[NS, IS, -99]``.
+    #: An empty cell is always blank; anything else that will not parse is an ERROR.
+    null_values: list[str] = Field(default_factory=list)
+
+    @field_validator("null_values", mode="before")
+    @classmethod
+    def _coerce_nulls(cls, v: Any) -> Any:
+        return _as_text(v)
 
     def mapped(self) -> dict[str, str]:
         """Canonical name -> user column, for the mappings that are actually set."""
@@ -135,6 +143,9 @@ class SurveySource(SourceBase):
 class AssaySource(SourceBase):
     density: DensitySpec
     flags: dict[str, FlagSpec] = Field(default_factory=dict)
+    #: A negative grade is a detection limit (``-0.01`` means ``<0.01``) and reads as half
+    #: of it. Off, a negative grade is an ERROR, since it may be a sentinel such as -99.
+    negative_is_below_detection: bool = False
 
 
 class LithoSource(SourceBase):
@@ -156,6 +167,8 @@ class DomainLookupSource(SourceBase):
 
 class BlockModelSource(SourceBase):
     density: DensitySpec
+    #: As for :class:`AssaySource`.
+    negative_is_below_detection: bool = False
 
 
 class AvailabilitySource(SourceBase):
