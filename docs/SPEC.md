@@ -31,7 +31,7 @@ core intervals should I pull next?"**
 
 ### Out of scope (v1)
 
-- Graphical user interface (deferred to M6)
+- Graphical user interface (deferred to M7)
 - 3D visualisation
 - Direct database or acQuire/Fusion connectivity (CSV only in v1)
 - Predictive geometallurgical modelling of test outcomes
@@ -775,6 +775,9 @@ geomet-sampler/
 ├── pyproject.toml            # uv, Python 3.12
 ├── CLAUDE.md
 ├── README.md
+├── docs/
+│   ├── SPEC.md
+│   └── TODO.md
 ├── config/
 │   └── example_project.yaml
 ├── src/geomet_sampler/

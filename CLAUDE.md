@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Project context for Claude Code. Read `SPEC.md` for the full specification.
+Project context for Claude Code. Read `docs/SPEC.md` for the full specification.
 
 ## What this is
 
@@ -128,7 +128,7 @@ leaked into the library.
 
 ## Build order
 
-Follow the milestones in `SPEC.md` section 8. Do not start M4 before M2 tests pass.
+Follow the milestones in `docs/SPEC.md` section 8. Do not start M4 before M2 tests pass.
 Desurvey errors propagate silently into every downstream result, so it gets verified
 against hand calculations before anything is built on top of it.
 

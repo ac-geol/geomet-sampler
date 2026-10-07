@@ -208,11 +208,12 @@ Parameters that must be confirmed before the output is trusted, marked in the co
 - `domaining.grade_bins.edges` must come from your own grade distribution.
 - `allocation.period_weights` encode how strongly the programme favours early production.
 
-See `SPEC.md` section 9 for the open design decisions.
+See `docs/SPEC.md` section 9 for the open design decisions, and `docs/TODO.md` for
+planned upgrades.
 
 ## Status
 
-v1 (milestones M1–M5 from `SPEC.md`, plus M6 reporting). Milestone M7, an optional UI
+v1 (milestones M1–M5 from `docs/SPEC.md`, plus M6 reporting). Milestone M7, an optional UI
 calling this library unchanged, is not built.
 
 This is a v1 built from a specification for a real but niche workflow. It has not yet
